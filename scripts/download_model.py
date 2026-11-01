@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -49,6 +50,19 @@ def main(argv=None) -> int:
         from huggingface_hub import snapshot_download
 
         out.parent.mkdir(parents=True, exist_ok=True)
+        # fail BEFORE downloading tens of GB if the disk is too small (Kaggle /kaggle/working is only ~20 GB)
+        try:
+            from huggingface_hub import HfApi
+
+            mi = HfApi().model_info(model_id, revision=revision, files_metadata=True, token=os.environ.get("HF_TOKEN") or None)
+            need = sum((f.size or 0) for f in (mi.siblings or []) if f.rfilename.endswith((".safetensors", ".json", ".txt", ".model")))
+            free = shutil.disk_usage(out.parent).free
+            print(f"model files {need / 1e9:.1f} GB, free disk at {out.parent}: {free / 1e9:.1f} GB", flush=True)
+            if need and free < need * 1.05:
+                print(f"NOT ENOUGH DISK: need ~{need / 1e9:.0f} GB, only {free / 1e9:.0f} GB free. Use --out on a bigger disk (Kaggle: /tmp or /kaggle/temp) or a smaller model (Qwen/Qwen3-8B ~16 GB).")
+                return 3
+        except Exception as e:  # noqa: BLE001
+            print(f"(disk pre-check skipped: {type(e).__name__})")
         print(f"downloading {model_id} (revision={revision or 'latest'}) -> {out}", flush=True)
         snapshot_download(repo_id=model_id, revision=revision, local_dir=str(out), token=os.environ.get("HF_TOKEN") or None, allow_patterns=PATTERNS)
 

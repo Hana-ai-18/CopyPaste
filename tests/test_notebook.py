@@ -35,10 +35,10 @@ def test_notebook_smoke_executes_end_to_end(tmp_path):
     nbclient.NotebookClient(nb, timeout=600, kernel_name="python3", resources={"metadata": {"path": str(ROOT)}}).execute()
     text = "\n".join(o.get("text", "") for c in nb.cells if c.cell_type == "code" for o in c.get("outputs", []))
     assert "SMOKE TEST OK" in text and "Penalized Accuracy" in text
-    assert "RUN_MODE = smoke" in text
+    assert "MODE: smoke" in text
 
 
-@pytest.mark.parametrize("mode", ["preflight", "train_eval", "build_exemplars", "public_test"])
+@pytest.mark.parametrize("mode", ["preflight", "train_eval", "build_exemplars_all", "public_test", "build_exemplars,train_eval"])
 def test_notebook_real_modes_with_mock_llm(mode, demo_split, tmp_path_factory):
     """Executes the non-smoke branches (data discovery, run/resume, evaluate, exemplars, validation) with a scripted LLM."""
     import json
@@ -65,7 +65,7 @@ def test_notebook_real_modes_with_mock_llm(mode, demo_split, tmp_path_factory):
     deps.source = deps.source.replace('run([sys.executable, "-m", "pip", "install", "-q", "-r", "requirements-gpu.txt"])', "pass")
     cfg = next(c for c in nb.cells if c.cell_type == "code" and "GITHUB_REPO" in c.source)
     vals = {"REPO_DIR": str(repo), "WORK": str(base / "work"), "RUN_MODE": mode, "RUN_TESTS": False, "MODEL_DIR": str(model),
-            "CONFIG": str(cfg_file), "DATA_ROOT": str(root), "EXEMPLAR_N": 4, "EVAL_N": 9, "EXEMPLAR_SCOPE": "all", "HOLDOUT_FOLD": "0/2", "NUM_PROCS": 2, "STAGGER_S": 0}
+            "CONFIG": str(cfg_file), "DATA_ROOT": str(root), "EXEMPLAR_N": 4, "EVAL_N": 9, "HOLDOUT_FOLD": "0/2", "NUM_PROCS": 2, "STAGGER_S": 0}
     src = cfg.source
     for name, val in vals.items():
         src = re.sub(rf"^{name}\s*=.*$", f"{name} = {val!r}", src, flags=re.M)
@@ -77,7 +77,10 @@ def test_notebook_real_modes_with_mock_llm(mode, demo_split, tmp_path_factory):
         assert "==== PREFLIGHT ====" in text and (base / "work" / "auto_tune.json").exists()
     elif mode == "train_eval":
         assert "Penalized Accuracy" in text and "threshold_answer=" in text
-    elif mode == "build_exemplars":
+    elif mode == "build_exemplars,train_eval":
+        assert "MODE: build_exemplars" in text and "MODE: train_eval" in text and "Penalized Accuracy" in text
+        assert (repo / "exemplars" / "exemplars_safe.jsonl").exists()
+    elif mode == "build_exemplars_all":
         assert (repo / "exemplars" / "exemplars.jsonl").read_text(encoding="utf-8").strip()
     else:
         assert "OK - submission looks valid" in text and "[shard 0/2]" in text and "[shard 1/2]" in text

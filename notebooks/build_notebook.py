@@ -29,12 +29,14 @@ Repo private: thêm token vào *Add-ons → Secrets* với tên `GITHUB_TOKEN`.
 
 cells.append(CODE('''
 # ======================= CẤU HÌNH – chỉ sửa ô này =======================
-GITHUB_REPO   = "https://github.com/<ten-ban>/<ten-repo>.git"   # repo (nên để PRIVATE)
+GITHUB_REPO   = "https://github.com/Hana-ai-18/CopyPaste.git"   # repo công khai: không cần token (repo private -> thêm Secret GITHUB_TOKEN)
 GITHUB_BRANCH = "main"
 GITHUB_TOKEN  = ""            # để trống: sẽ lấy từ Kaggle Secret "GITHUB_TOKEN" (nếu có)
 REPO_DIR      = ""            # đặt đường dẫn thư mục local để BỎ QUA bước git clone
 
-RUN_MODE      = "smoke"       # smoke | preflight | train_eval | build_exemplars | public_test
+RUN_MODE      = "smoke,preflight"   # một hoặc NHIỀU chế độ, cách nhau dấu phẩy, chạy lần lượt:
+                              #  smoke | preflight | build_exemplars | train_eval | build_exemplars_all | public_test
+                              #  gợi ý: phiên 1 "smoke,preflight,build_exemplars,train_eval" · phiên 2 "build_exemplars_all,public_test"
 RUN_TESTS     = True          # chạy pytest ở bước kiểm tra
 AUTO_TUNE     = True          # dùng kết quả preflight (auto_tune.json): tự giảm context / số lượt bỏ phiếu nếu VRAM sát trần hoặc không kịp giờ
 PREFLIGHT_N   = 6             # số câu train thật dùng để đo (RUN_MODE = "preflight")
@@ -48,11 +50,10 @@ MODEL_REVISION = ""           # để trống = dùng revision trong configs/mod
 MODEL_DIR     = ""            # để trống = /kaggle/temp/models/llm (nếu có) hoặc <WORK>/models/llm; hoặc đường dẫn model có sẵn
 CONFIG        = "configs/t4_kaggle.json"           # T4 + Qwen3-8B; dùng configs/t4_kaggle_14b.json nếu MODEL_ID="" (14B); máy RTX 5090: configs/rtx5090_vllm.json
 
-DATA_ROOT     = ""            # ví dụ "/kaggle/input/zalo-datamate"; để trống = tự dò
+DATA_ROOT     = "/kaggle/input/datasets/gmnguynhng/copypaste"   # thư mục dataset đã up; sai/không tồn tại thì tự dò trong /kaggle/input
 HOLDOUT_FOLD = "0/5"          # K/N: giữ lại ~1/5 SỐ SHOP của train làm tập đánh giá (shop test là shop CHƯA THẤY -> phải đo theo shop, không theo câu)
 EXEMPLAR_N    = 400           # số câu train (ngoài shop giữ lại) dùng để dựng ví dụ few-shot
 EVAL_N        = 150           # số câu của các shop giữ lại dùng để đánh giá / hiệu chỉnh ngưỡng
-EXEMPLAR_SCOPE = "safe"       # safe: bank chỉ từ shop KHÔNG giữ lại (để đo trung thực) | all: bank từ mọi shop train (dùng khi nộp bài)
 WORK          = "/kaggle/working"
 '''))
 
@@ -80,7 +81,10 @@ print("python", sys.version.split()[0])
 run("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || echo 'no GPU visible'", check=False)
 WORK = Path(WORK)
 WORK.mkdir(parents=True, exist_ok=True)
-assert RUN_MODE in ("smoke", "preflight", "train_eval", "build_exemplars", "public_test"), "RUN_MODE is invalid"
+MODES = [m.strip() for m in RUN_MODE.split(",") if m.strip()]
+VALID = ("smoke", "preflight", "build_exemplars", "train_eval", "build_exemplars_all", "public_test")
+assert MODES and all(m in VALID for m in MODES), f"RUN_MODE is invalid: {RUN_MODE!r}; valid: {VALID}"
+NEEDS_GPU = any(m != "smoke" for m in MODES)
 '''))
 
 cells.append(MD("## 1 · Lấy code từ GitHub"))
@@ -126,7 +130,7 @@ run("git log -1 --oneline || true", check=False)
 cells.append(MD("## 2 · Cài thư viện và chạy kiểm thử"))
 cells.append(CODE('''
 run([sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt"])
-if RUN_MODE != "smoke":
+if NEEDS_GPU:
     run([sys.executable, "-m", "pip", "install", "-q", "-r", "requirements-gpu.txt"])
 if RUN_TESTS:
     run([sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", "tests/test_textutil_scoring.py", "tests/test_helpers_loader.py",
@@ -152,10 +156,22 @@ assert m["PA"] > 0.9 and m["wrong"] == 0, "SMOKE TEST FAILED - do not continue"
 print("\\nSMOKE TEST OK")
 '''))
 
-cells.append(MD("## 4 · Model và dữ liệu thật (bỏ qua khi `RUN_MODE = 'smoke'`)"))
+cells.append(MD("## 4 · Model và dữ liệu thật (bỏ qua khi chỉ chạy `smoke`)"))
 cells.append(CODE('''
-if RUN_MODE != "smoke":
-    mdir = Path(MODEL_DIR) if MODEL_DIR else (Path("/kaggle/temp/models/llm") if Path("/kaggle/temp").is_dir() else WORK / "models" / "llm")
+if NEEDS_GPU:
+    if MODEL_DIR:
+        mdir = Path(MODEL_DIR)
+    else:   # pick the disk with the most free space; /kaggle/working is only ~20 GB (and would be saved as notebook output)
+        cands = [Path(p) for p in ("/kaggle/temp", "/tmp", str(WORK)) if Path(p).is_dir()]
+        best = max(cands, key=lambda p: shutil.disk_usage(p).free)
+        mdir = best / "models" / "llm"
+        print("free disk (GB):", {str(p): round(shutil.disk_usage(p).free / 1e9) for p in cands}, "-> model in", mdir)
+    if "14b" in MODEL_ID.lower() and CONFIG.endswith("t4_kaggle.json"):
+        CONFIG = "configs/t4_kaggle_14b.json"
+        print("MODEL_ID is 14B -> CONFIG switched to", CONFIG)
+    if "8b" in MODEL_ID.lower() and CONFIG.endswith("t4_kaggle_14b.json"):
+        CONFIG = "configs/t4_kaggle.json"
+        print("MODEL_ID is 8B -> CONFIG switched to", CONFIG)
     MODEL_DIR = str(mdir)
     hf_token = os.environ.get("HF_TOKEN", "")
     if not hf_token:
@@ -199,12 +215,15 @@ if RUN_MODE != "smoke":
                     unzip_all(target, dest, depth + 1)
             except Exception as e:
                 print("cannot unzip", z, e)
+    if DATA_ROOT and not Path(DATA_ROOT).exists():
+        print(f"DATA_ROOT {DATA_ROOT} không tồn tại -> tự dò trong /kaggle/input")
+        DATA_ROOT = ""
     for root in ([DATA_ROOT] if DATA_ROOT else ["/kaggle/input", "/content"]):
         if Path(root).exists():
             unzip_all(root, WORK / "data")
 
     SPLITS = {}
-    for root in ([DATA_ROOT] if DATA_ROOT else ["/kaggle/input", "/content", str(WORK / "data"), str(WORK), "."]):
+    for root in ([DATA_ROOT, str(WORK / "data")] if DATA_ROOT else ["/kaggle/input", "/content", str(WORK / "data"), str(WORK), "."]):
         if Path(root).exists():
             for k, v in find_splits(root).items():
                 SPLITS.setdefault(k, v)
@@ -212,7 +231,7 @@ if RUN_MODE != "smoke":
 '''))
 
 cells.append(MD("""
-## 5 · Chạy theo `RUN_MODE`
+## 5 · Chạy lần lượt các chế độ trong `RUN_MODE`
 
 > **Thời gian:** trên T4 mỗi câu hỏi có thể mất vài chục giây đến vài phút (sinh 3–5 lời giải). Một phiên Kaggle tối đa ~12 giờ, nên với `public_test` hãy dùng `RESUME = True` và chạy lại ô này nếu phiên bị ngắt, hoặc giảm số lời giải bằng `--set agent.stages=[1]` khi chỉ muốn thử nhanh.
 > Để so sánh các cấu hình với nhau hãy dùng `train_eval` (có đáp án), đừng đốt lượt nộp (5/ngày).
@@ -282,56 +301,58 @@ def run_agent(split, out, extra=(), questions_file=None):
             if lf.exists():
                 fo.write(lf.read_text(encoding="utf-8"))
 
-if RUN_MODE == "preflight":
-    # measure on the REAL GPU with a few real questions: model load time, sec/question, peak VRAM/RAM -> settings for the long run
-    split, out = need("train"), WORK / "preflight"
-    shutil.rmtree(out, ignore_errors=True)
-    out.mkdir(parents=True)
-    cmd = [sys.executable, "-m", "datamate.run", "--data_dir", str(split), "--out", str(out / "submission.jsonl"), "--logs", str(out / "logs"),
-           "--config", CONFIG, "--set", f'model_path="{MODEL_DIR}"', "--set", 'agent.exemplars_path="none"',
-           "--exclude_fold", HOLDOUT_FOLD, "--limit", str(PREFLIGHT_N), "--eval"]
-    run(cmd, env={"CUDA_VISIBLE_DEVICES": "0"}, check=False)
-    target = SPLITS["public_test"] / "questions.jsonl" if "public_test" in SPLITS else None
-    n_target = sum(1 for _ in open(target, encoding="utf-8")) if target else 1000
-    run([sys.executable, "-m", "datamate.preflight", "--logs", str(out / "logs"), "--n_questions", str(n_target), "--procs", str(NUM_PROCS or max(1, n_gpus())),
-         "--budget_h", str(max(1.0, SESSION_HOURS - 0.7)), "--out", str(WORK / "auto_tune.json")])
-    print("Saved", WORK / "auto_tune.json", "- the next runs apply it automatically (AUTO_TUNE = True).")
+for MODE in MODES:
+    print('\\n' + '=' * 20, 'MODE:', MODE, '=' * 20)
+    if MODE == "preflight":
+        # measure on the REAL GPU with a few real questions: model load time, sec/question, peak VRAM/RAM -> settings for the long run
+        split, out = need("train"), WORK / "preflight"
+        shutil.rmtree(out, ignore_errors=True)
+        out.mkdir(parents=True)
+        cmd = [sys.executable, "-m", "datamate.run", "--data_dir", str(split), "--out", str(out / "submission.jsonl"), "--logs", str(out / "logs"),
+               "--config", CONFIG, "--set", f'model_path="{MODEL_DIR}"', "--set", 'agent.exemplars_path="none"',
+               "--exclude_fold", HOLDOUT_FOLD, "--limit", str(PREFLIGHT_N), "--eval"]
+        run(cmd, env={"CUDA_VISIBLE_DEVICES": "0"}, check=False)
+        target = SPLITS["public_test"] / "questions.jsonl" if "public_test" in SPLITS else None
+        n_target = sum(1 for _ in open(target, encoding="utf-8")) if target else 1000
+        run([sys.executable, "-m", "datamate.preflight", "--logs", str(out / "logs"), "--n_questions", str(n_target), "--procs", str(NUM_PROCS or max(1, n_gpus())),
+             "--budget_h", str(max(1.0, SESSION_HOURS - 0.7)), "--out", str(WORK / "auto_tune.json")])
+        print("Saved", WORK / "auto_tune.json", "- the next runs apply it automatically (AUTO_TUNE = True).")
 
-elif RUN_MODE == "train_eval":
-    split, out = need("train"), WORK / "train_eval"
-    out.mkdir(parents=True, exist_ok=True)
-    # evaluate on SHOPS the exemplar bank has never seen (exemplars_safe.jsonl is built without them): an honest estimate for the unseen test shops
-    safe_bank = Path("exemplars/exemplars_safe.jsonl")
-    extra = ["--biz_fold", HOLDOUT_FOLD, "--limit", str(EVAL_N), "--eval"]
-    if safe_bank.exists():
-        extra += ["--set", f'agent.exemplars_path="{safe_bank}"']
-    else:
-        extra += ["--set", 'agent.exemplars_path="none"']
-        print("no exemplars_safe.jsonl yet: evaluating zero-shot (run RUN_MODE='build_exemplars' first for the real estimate)")
-    run_agent(split, out, extra)
-    run([sys.executable, "-m", "datamate.evaluate", "--pred", str(out / "submission.jsonl"), "--gold", str(split / "answers.jsonl"),
-         "--calibrate", str(out / "logs" / "log.jsonl")])
+    elif MODE == "train_eval":
+        split, out = need("train"), WORK / "train_eval"
+        out.mkdir(parents=True, exist_ok=True)
+        # evaluate on SHOPS the exemplar bank has never seen (exemplars_safe.jsonl is built without them): an honest estimate for the unseen test shops
+        safe_bank = Path("exemplars/exemplars_safe.jsonl")
+        extra = ["--biz_fold", HOLDOUT_FOLD, "--limit", str(EVAL_N), "--eval"]
+        if safe_bank.exists():
+            extra += ["--set", f'agent.exemplars_path="{safe_bank}"']
+        else:
+            extra += ["--set", 'agent.exemplars_path="none"']
+            print("no exemplars_safe.jsonl yet: evaluating zero-shot (run the 'build_exemplars' mode first for the real estimate)")
+        run_agent(split, out, extra)
+        run([sys.executable, "-m", "datamate.evaluate", "--pred", str(out / "submission.jsonl"), "--gold", str(split / "answers.jsonl"),
+             "--calibrate", str(out / "logs" / "log.jsonl")])
 
-elif RUN_MODE == "build_exemplars":
-    split, out = need("train"), WORK / "exemplar_run"
-    out.mkdir(parents=True, exist_ok=True)
-    scope_args = [] if EXEMPLAR_SCOPE == "all" else ["--exclude_fold", HOLDOUT_FOLD]
-    target = "exemplars/exemplars.jsonl" if EXEMPLAR_SCOPE == "all" else "exemplars/exemplars_safe.jsonl"
-    run_agent(split, out, [*scope_args, "--limit", str(EXEMPLAR_N), "--set", 'agent.exemplars_path="none"'])
-    run([sys.executable, "scripts/build_exemplars.py", "--log", str(out / "logs" / "log.jsonl"), "--gold", str(split / "answers.jsonl"),
-         "--out", target])
-    print("built", target)
-    print("exemplars/exemplars.jsonl is built from TRAIN only. Keep it out of git (it contains train questions); it is copied into the Docker image.")
+    elif MODE in ("build_exemplars", "build_exemplars_all"):
+        split, out = need("train"), WORK / "exemplar_run"
+        out.mkdir(parents=True, exist_ok=True)
+        scope_args = [] if MODE == "build_exemplars_all" else ["--exclude_fold", HOLDOUT_FOLD]
+        target = "exemplars/exemplars.jsonl" if MODE == "build_exemplars_all" else "exemplars/exemplars_safe.jsonl"
+        run_agent(split, out, [*scope_args, "--limit", str(EXEMPLAR_N), "--set", 'agent.exemplars_path="none"'])
+        run([sys.executable, "scripts/build_exemplars.py", "--log", str(out / "logs" / "log.jsonl"), "--gold", str(split / "answers.jsonl"),
+             "--out", target])
+        print("built", target)
+        print("exemplars/exemplars.jsonl is built from TRAIN only. Keep it out of git (it contains train questions); it is copied into the Docker image.")
 
-elif RUN_MODE == "public_test":
-    split, out = need("public_test"), WORK / "public_test_out"
-    out.mkdir(parents=True, exist_ok=True)
-    run_agent(split, out, questions_file=split / "questions.jsonl")
-    run([sys.executable, "scripts/validate_submission.py", "--sub", str(out / "submission.jsonl"), "--questions", str(split / "questions.jsonl")])
-    shutil.copy(out / "submission.jsonl", WORK / "submission.jsonl")
-    print("\\n-> /kaggle/working/submission.jsonl is ready: download it and upload it in the 'Submission' section of the portal.")
-else:
-    print("RUN_MODE = smoke: nothing else to run. Set RUN_MODE to train_eval / build_exemplars / public_test for the real thing.")
+    elif MODE == "public_test":
+        split, out = need("public_test"), WORK / "public_test_out"
+        out.mkdir(parents=True, exist_ok=True)
+        run_agent(split, out, questions_file=split / "questions.jsonl")
+        run([sys.executable, "scripts/validate_submission.py", "--sub", str(out / "submission.jsonl"), "--questions", str(split / "questions.jsonl")])
+        shutil.copy(out / "submission.jsonl", WORK / "submission.jsonl")
+        print("\\n-> /kaggle/working/submission.jsonl is ready: download it and upload it in the 'Submission' section of the portal.")
+    elif MODE == "smoke":
+        pass   # smoke already ran above
 '''))
 
 cells.append(MD("""
