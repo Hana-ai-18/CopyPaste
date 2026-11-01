@@ -1,0 +1,10 @@
+# LLM runtime. Pin the versions that match your CUDA / base image.
+# Kaggle T4 (backend "hf"):  transformers + bitsandbytes + accelerate
+# RTX 5090 scoring machine (backend "vllm"): a vLLM build with CUDA >= 12.8 (Blackwell) - see the organisers' guideline.
+transformers>=4.51   # Qwen3 architecture needs >= 4.51
+accelerate>=0.34
+bitsandbytes>=0.43
+huggingface_hub>=0.24
+sentencepiece
+protobuf
+# vllm   # uncomment for backend "vllm" (needs a Blackwell-compatible build)

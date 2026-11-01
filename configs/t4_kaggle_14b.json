@@ -1,0 +1,25 @@
+{
+  "backend": "hf",
+  "time_budget_s": 38000,
+  "hf": {
+    "load_in_4bit": true,
+    "dtype": "float16",
+    "batch_size": 1,
+    "max_input_tokens": 12000
+  },
+  "generation": {
+    "max_new_tokens": 700
+  },
+  "agent": {
+    "stages": [
+      3,
+      5
+    ],
+    "max_repairs": 2,
+    "max_profile_chars": 4500,
+    "max_rulebook_chars": 12000,
+    "per_question_time_s": 600,
+    "min_time_per_question_s": 40,
+    "max_readme_chars": 4500
+  }
+}

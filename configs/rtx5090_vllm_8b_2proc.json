@@ -1,0 +1,22 @@
+{
+  "backend": "vllm",
+  "vllm": {
+    "dtype": "auto",
+    "tensor_parallel_size": 1,
+    "gpu_memory_utilization": 0.9,
+    "max_model_len": 24576
+  },
+  "generation": {
+    "max_new_tokens": 1000
+  },
+  "agent": {
+    "stages": [
+      3,
+      5
+    ],
+    "max_repairs": 2,
+    "max_rulebook_chars": 20000,
+    "max_readme_chars": 7000,
+    "max_profile_chars": 6000
+  }
+}

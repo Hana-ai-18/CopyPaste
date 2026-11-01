@@ -1,0 +1,29 @@
+# competition data must NOT be redistributed (rules) - never commit it
+train/
+public_test/
+private_test/
+data/
+demo_split/
+*.zip
+*.parquet
+*.sqlite
+*.xlsx
+
+# exemplar bank = train questions + code: do not publish (rebuild it with scripts/build_exemplars.py)
+exemplars/*.jsonl
+
+# models and outputs
+models/*
+!models/.gitkeep
+result/
+out/
+*.safetensors
+*.gguf
+*.bin
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/

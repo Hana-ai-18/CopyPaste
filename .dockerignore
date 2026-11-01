@@ -1,0 +1,12 @@
+.git
+__pycache__
+.pytest_cache
+.ipynb_checkpoints
+tests
+demo_split
+out
+result
+train
+public_test
+private_test
+*.zip
