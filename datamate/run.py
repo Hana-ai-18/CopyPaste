@@ -252,7 +252,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         info = json.load(open(log_dir / "run_info.json", encoding="utf-8"))
         info.update({"finished": time.strftime("%Y-%m-%d %H:%M:%S"), "total_seconds": round(time.time() - T0, 1), "n_written": len(final),
-                     "model_load_s": model_load_s, **resource_stats()})
+                     "model_load_s": model_load_s, **resource_stats(),
+                     "prompt_tokens": getattr(llm, "stats_prompt_tokens", None), "prefill_tokens_computed": getattr(llm, "stats_prefill_tokens", None)})
         json.dump(info, open(log_dir / "run_info.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1, default=str)
     except Exception:
         pass

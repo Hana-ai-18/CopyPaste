@@ -27,6 +27,7 @@ def main() -> None:
     ap.add_argument("--out", default="exemplars/exemplars.jsonl")
     ap.add_argument("--max_code_chars", type=int, default=1500)
     ap.add_argument("--max_per_question_text", type=int, default=1)
+    ap.add_argument("--max_per_business", type=int, default=25, help="cap per shop: no single shop's column names / style may dominate the bank (private-test shops are NEW shops)")
     a = ap.parse_args()
 
     low = (str(a.gold) + str(a.log)).lower()
@@ -38,13 +39,16 @@ def main() -> None:
         if l.strip():
             r = json.loads(l)
             gold[r["id"]] = r
-    out, seen = [], {}
+    out, seen, per_biz = [], {}, {}
     for l in open(a.log, encoding="utf-8"):
         if not l.strip():
             continue
         d = json.loads(l)
         g = gold.get(d["id"])
         if g is None or seen.get(d["question"], 0) >= a.max_per_question_text:
+            continue
+        biz = d.get("business_id", "?")
+        if per_biz.get(biz, 0) >= a.max_per_business:
             continue
         for c in d.get("candidates", []):
             if not c.get("ok") or not c.get("code"):
@@ -54,12 +58,13 @@ def main() -> None:
             if s == 1 and len(c["code"]) <= a.max_code_chars:
                 out.append({"question": d["question"], "code": c["code"], "answer_type": c["answer_type"]})
                 seen[d["question"]] = seen.get(d["question"], 0) + 1
+                per_biz[biz] = per_biz.get(biz, 0) + 1
                 break
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     with open(a.out, "w", encoding="utf-8") as f:
         for it in out:
             f.write(json.dumps(it, ensure_ascii=False) + "\n")
-    print(f"{len(out)} exemplars from {len(gold)} gold answers -> {a.out}")
+    print(f"{len(out)} exemplars from {len(gold)} gold answers, {len(per_biz)} shops (max {a.max_per_business} each) -> {a.out}")
 
 
 if __name__ == "__main__":

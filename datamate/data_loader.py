@@ -208,7 +208,12 @@ def drop_summary_rows(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     obj = df.select_dtypes(exclude=["number", "datetime"])
     if obj.empty:
         return df, 0
-    keys = obj.apply(lambda c: c.astype("string").map(lambda v: strip_accents(v).lower().strip() if isinstance(v, str) else ""))
+    def _norm_col(c: pd.Series) -> pd.Series:   # normalise each DISTINCT value once (columns repeat a lot) instead of every cell
+        s = c.astype("string")
+        mp = {v: strip_accents(v).lower().strip() for v in s.dropna().unique()}
+        return s.map(mp).fillna("").astype(object)
+
+    keys = obj.apply(_norm_col)
     summ = keys.apply(lambda c: c.str.match(_SUMMARY)).any(axis=1)
     mostly_empty = (df.isna().mean(axis=1) >= 0.6) | (df.notna().sum(axis=1) <= 3)   # label + at most a couple of values
     colnames = {strip_accents(str(c)).lower().strip() for c in df.columns}

@@ -121,7 +121,7 @@ def test_hf_backend_flow_with_stubs(monkeypatch):
 
     from datamate.llm import HFBackend
 
-    b = HFBackend("some/path", {"load_in_4bit": True, "dtype": "float16", "batch_size": 2, "chat_template_kwargs": {"enable_thinking": False}},
+    b = HFBackend("some/path", {"load_in_4bit": True, "dtype": "float16", "batch_size": 2, "prefill_chunk": 0, "chat_template_kwargs": {"enable_thinking": False}},
                   {"max_new_tokens": 33}, seed=1)
     assert b.generate([{"role": "user", "content": "xx"}]) == "Hi"
     assert b.generate_batch([[{"role": "user", "content": "a"}], [{"role": "user", "content": "bbb"}], [{"role": "user", "content": "c"}]]) == ["Hi"] * 3
@@ -184,7 +184,115 @@ def test_hf_backend_retries_after_cuda_oom(monkeypatch):
     monkeypatch.setitem(sys.modules, "transformers", tf)
     from datamate.llm import HFBackend
 
-    b = HFBackend("p", {"load_in_4bit": True, "dtype": "float16", "batch_size": 2, "max_input_tokens": 1000}, {"max_new_tokens": 5})
+    b = HFBackend("p", {"load_in_4bit": True, "dtype": "float16", "batch_size": 2, "prefill_chunk": 0, "max_input_tokens": 1000}, {"max_new_tokens": 5})
     assert Model.kw["device_map"] == {"": 0} and Model.kw["low_cpu_mem_usage"] is True      # whole model on the one visible GPU, streamed load
     assert b.generate_batch([[{"role": "user", "content": "a"}], [{"role": "user", "content": "b"}]]) == ["Hi", "Hi"]
     assert freed and (1, 750) in seen                                                       # cache freed, retried one by one with a 25 % shorter context
+
+
+def test_chunked_prefill_matches_full_prefill():
+    """Chunked prefill (what keeps a 13k-token prompt from OOM-ing a T4) must give exactly the same greedy tokens as one big pass."""
+    torch = pytest.importorskip("torch")
+    tf = pytest.importorskip("transformers")
+    import random
+    from datamate.llm import HFBackend
+
+    torch.manual_seed(0)
+    cfg = tf.Qwen3Config(vocab_size=300, hidden_size=64, intermediate_size=128, num_hidden_layers=2, num_attention_heads=4,
+                         num_key_value_heads=2, head_dim=16, max_position_embeddings=4096)
+    model = tf.Qwen3ForCausalLM(cfg).eval()
+
+    class BE(dict):
+        def to(self, dev): return self
+
+    class Tok:
+        pad_token_id, eos_token_id = 0, 1
+
+        def __call__(self, p, return_tensors=None, add_special_tokens=False, truncation=False, max_length=None, padding=False):
+            ps = [p] if isinstance(p, str) else p
+            t = torch.tensor([[2 + (ord(c) % 250) for c in x][-max_length:] for x in ps])
+            return BE(input_ids=t, attention_mask=torch.ones_like(t))
+
+        def decode(self, row, skip_special_tokens=True): return ",".join(map(str, row.tolist()))
+
+    b = HFBackend.__new__(HFBackend)
+    b.torch, b.model, b.tok, b.max_in = torch, model, Tok(), 4000
+    b.prefix_cache, b._pc, b._pc_ids, b.stats_prefill_tokens, b.stats_prompt_tokens = False, None, [], 0, 0
+    random.seed(3)
+    prompt = "".join(random.choice("abcdefghijklmnopqrstuvwxyz ") for _ in range(1500))
+    outs = []
+    for chunk in (0, 64, 700, 2048):
+        b.prefill_chunk = chunk
+        outs.append(b._gen([prompt], 16, 4000)[0])
+    assert len(set(outs)) == 1
+
+
+def test_prefix_cache_reuse_gives_identical_tokens():
+    """Reusing the KV cache of a shared prompt prefix (next question of the same shop, next variant, repair prompt) must not change the
+    greedy output, and must really skip the shared part."""
+    torch = pytest.importorskip("torch")
+    tf = pytest.importorskip("transformers")
+    import random
+    from datamate.llm import HFBackend
+
+    torch.manual_seed(1)
+    cfg = tf.Qwen3Config(vocab_size=300, hidden_size=64, intermediate_size=128, num_hidden_layers=2, num_attention_heads=4,
+                         num_key_value_heads=2, head_dim=16, max_position_embeddings=4096)
+    model = tf.Qwen3ForCausalLM(cfg).eval()
+
+    class BE(dict):
+        def to(self, dev): return self
+
+    class Tok:
+        pad_token_id, eos_token_id = 0, 1
+
+        def __call__(self, p, return_tensors=None, add_special_tokens=False, truncation=False, max_length=None, padding=False):
+            ps = [p] if isinstance(p, str) else p
+            t = torch.tensor([[2 + (ord(c) % 250) for c in x][-max_length:] for x in ps])
+            return BE(input_ids=t, attention_mask=torch.ones_like(t))
+
+        def decode(self, row, skip_special_tokens=True): return ",".join(map(str, row.tolist()))
+
+    def make(prefix_cache):
+        b = HFBackend.__new__(HFBackend)
+        b.torch, b.model, b.tok, b.max_in = torch, model, Tok(), 4000
+        b.prefill_chunk, b.prefix_cache, b._pc, b._pc_ids = 300, prefix_cache, None, []
+        b.stats_prefill_tokens = b.stats_prompt_tokens = 0
+        return b
+
+    random.seed(5)
+    rnd = lambda k: "".join(random.choice("abcdefghijklmnopqrstuvwxyz ") for _ in range(k))
+    shop1, shop2 = rnd(1200), rnd(900)
+    prompts = [shop1 + " Q1 variant 0", shop1 + " Q1 variant 1", shop1 + " Q1 variant 1" + rnd(200) + " repair", shop1 + " Q2 variant 0",
+               shop2 + " Q3 variant 0", shop2 + " Q3 variant 0", shop1 + " Q4"]
+    ref, fast = make(False), make(True)
+    for pr in prompts:
+        assert fast._gen([pr], 12, 4000) == ref._gen([pr], 12, 4000)
+    assert fast.stats_prefill_tokens < 0.5 * fast.stats_prompt_tokens   # most of the prompt tokens were NOT recomputed
+
+
+def _calib_files(tmp_path, rows):
+    """rows: (confidence, is_correct) for number questions."""
+    log, gold = tmp_path / "log.jsonl", tmp_path / "gold.jsonl"
+    with open(log, "w") as fl, open(gold, "w") as fg:
+        for i, (conf, ok) in enumerate(rows):
+            fl.write(json.dumps({"id": f"q{i}", "confidence": conf, "top_candidate": {"type": "number", "answer": 1.0 if ok else 2.0}}) + "\n")
+            fg.write(json.dumps({"id": f"q{i}", "type": "number", "answer": 1.0}) + "\n")
+    return log, gold
+
+
+def test_calibrate_keeps_defaults_on_small_or_noisy_samples(tmp_path):
+    from datamate.evaluate import calibrate
+    rows = [(0.6, True)] * 20 + [(0.4, False)] * 5 + [(1.0, True)] * 20      # n = 45 < 100
+    log, gold = _calib_files(tmp_path, rows)
+    out = calibrate(log, gold)
+    assert (out["threshold_answer"], out["threshold_unanswerable"]) == (0.6, 0.8)
+
+
+def test_calibrate_moves_thresholds_only_for_a_clear_gain(tmp_path):
+    from datamate.evaluate import calibrate
+    # 60 answers at 0.6 share that are mostly WRONG: raising threshold_answer above 0.6 avoids many -1 -> big, real gain on n=160
+    rows = [(0.6, False)] * 45 + [(0.6, True)] * 15 + [(1.0, True)] * 100
+    log, gold = _calib_files(tmp_path, rows)
+    out = calibrate(log, gold)
+    assert out["threshold_answer"] > 0.6

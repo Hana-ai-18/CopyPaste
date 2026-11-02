@@ -4,7 +4,8 @@
   "hf": {
     "load_in_4bit": true,
     "dtype": "float16",
-    "batch_size": 2,
+    "batch_size": 1,
+    "prefill_chunk": 2048,
     "max_input_tokens": 13000
   },
   "generation": {

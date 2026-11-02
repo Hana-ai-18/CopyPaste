@@ -66,6 +66,10 @@ class HFBackend(LLMBackend):
         self.ctk = cfg.get("chat_template_kwargs") or {}
         self.batch_size = max(1, int(cfg.get("batch_size", 1)))
         self.max_in = int(cfg.get("max_input_tokens", 12000))
+        self.prefill_chunk = int(cfg.get("prefill_chunk", 2048))   # 0 = old behaviour (whole prompt in one forward pass)
+        self.prefix_cache = bool(cfg.get("prefix_cache", True))     # keep the KV cache of the shared prompt prefix between calls
+        self._pc, self._pc_ids = None, []
+        self.stats_prefill_tokens = self.stats_prompt_tokens = 0
         trc = bool(cfg.get("trust_remote_code", False))
         self.tok = AutoTokenizer.from_pretrained(model_path, trust_remote_code=trc)
         self.tok.padding_side = "left"
@@ -107,12 +111,15 @@ class HFBackend(LLMBackend):
                 if "out of memory" not in str(e).lower():
                     raise
                 # CUDA OOM (long prompt / big batch): free the cache, retry the prompts one by one with a 25 % shorter context
+                self._pc, self._pc_ids = None, []
                 self.torch.cuda.empty_cache()
                 for pr in prompts:
                     outs.extend(self._gen([pr], mx, int(self.max_in * 0.75)))
         return outs
 
     def _gen(self, prompts: list[str], mx: int, max_len: int) -> list[str]:
+        if self.prefill_chunk > 0:
+            return [self._gen_chunked(p, mx, max_len) for p in prompts]
         torch = self.torch
         enc = self.tok(prompts, return_tensors="pt", padding=True, add_special_tokens=False,
                        truncation=True, max_length=max_len).to(self.model.device)
@@ -122,6 +129,56 @@ class HFBackend(LLMBackend):
         res = [self.tok.decode(row, skip_special_tokens=True) for row in gen[:, enc["input_ids"].shape[1]:]]
         del enc, gen
         return res
+
+    def _gen_chunked(self, prompt: str, mx: int, max_len: int) -> str:
+        """One prompt at a time. The prompt is processed in chunks of `prefill_chunk` tokens that fill the KV cache, then generate()
+        only has to feed the last token (attention memory = chunk x length instead of length x length: on a T4 a whole 13k-token
+        prefill materialised a 10 GB attention matrix and ran out of memory on every question).
+
+        PREFIX REUSE: the KV cache is kept between calls. Every prompt of a shop starts with the same ~12k tokens (system prompt,
+        README, rulebook, table profile); the 3-5 variants of a question and the repair prompts also share everything but the end.
+        So for the next prompt only the tokens after the longest common prefix are processed - the big prefill is paid once per
+        shop instead of once per generation."""
+        torch = self.torch
+        from transformers import DynamicCache
+
+        ids = self.tok(prompt, return_tensors="pt", add_special_tokens=False, truncation=True, max_length=max_len)["input_ids"].to(self.model.device)
+        seq = ids[0].tolist()
+        n = len(seq)
+        keep = 0
+        if self.prefix_cache and self._pc is not None:
+            old = self._pc_ids
+            lim = min(len(old), n - 1)
+            while keep < lim and old[keep] == seq[keep]:
+                keep += 1
+            try:
+                cur = int(self._pc.get_seq_length())
+                if keep > 0 and cur > keep:
+                    self._pc.crop(-(cur - keep))  # drop what was generated / the part that differs (negative = "remove N tokens": works in every transformers version)
+                if keep > 0 and int(self._pc.get_seq_length()) != keep:
+                    keep = 0
+            except Exception:  # noqa: BLE001
+                keep = 0
+        cache = self._pc if keep > 0 else DynamicCache()
+        self._pc, self._pc_ids = None, []        # (re)registered only after a successful run: an OOM must not leave a half-filled cache behind
+        self.stats_prefill_tokens += (n - 1) - keep
+        self.stats_prompt_tokens += n - 1
+        with torch.no_grad():
+            for s in range(keep, n - 1, self.prefill_chunk):
+                e = min(s + self.prefill_chunk, n - 1)
+                kw = {"input_ids": ids[:, s:e], "past_key_values": cache, "use_cache": True,
+                      "cache_position": torch.arange(s, e, device=ids.device)}
+                try:
+                    self.model(**kw, logits_to_keep=1)      # no need for logits of the prefix (saves chunk x 152k vocab floats)
+                except TypeError:
+                    self.model(**kw)
+            gen = self.model.generate(input_ids=ids, attention_mask=torch.ones_like(ids), past_key_values=cache, max_new_tokens=mx,
+                                      do_sample=False, temperature=None, top_p=None, top_k=None, pad_token_id=self.tok.pad_token_id)
+        out = self.tok.decode(gen[0, n:], skip_special_tokens=True)
+        if self.prefix_cache:
+            self._pc, self._pc_ids = cache, seq[: n - 1]
+        del ids, gen
+        return out
 
     def generate(self, messages, max_new_tokens=None):
         return self.generate_batch([messages], max_new_tokens)[0]

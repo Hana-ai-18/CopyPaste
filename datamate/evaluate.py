@@ -43,21 +43,28 @@ def calibrate(log_path, gold_path) -> dict:
     if not rows:
         print("no usable rows in the log (need run logs of a labelled split)")
         return {}
-    grid = [round(0.3 + 0.1 * i, 1) for i in range(8)] + [1.01]  # 0.3 .. 1.0, and 1.01 = never answer
-    best_pa, best_t = -9.0, (grid[0], grid[0])
-    for ta in grid:
-        for tu in grid:
-            total = 0
-            for conf, is_un, s in rows:
-                total += s if conf >= (tu if is_un else ta) else 0
-            pa = total / len(rows)
-            # iterate thresholds ascending and accept ties => among equal PA the HIGHER (safer) thresholds win
-            if pa >= best_pa - 1e-12:
-                best_pa, best_t = max(pa, best_pa), (ta, tu)
+    grid = [round(0.4 + 0.1 * i, 1) for i in range(7)]   # 0.4 .. 1.0 (never "never answer": that is a policy decision, not something to fit on 150 questions)
+
+    def pa_at(ta, tu):
+        return sum((s if conf >= (tu if is_un else ta) else 0) for conf, is_un, s in rows) / len(rows)
+
+    base_t = (0.6, 0.8)
+    base = pa_at(*base_t)
+    cands = [(round(pa_at(ta, tu), 9), ta + tu, (ta, tu)) for ta in grid for tu in grid]
+    best_pa, _, best_t = max(cands)          # best PA; among equal PA the HIGHER (safer) thresholds
+    if best_pa <= base + 1e-12:
+        best_pa, best_t = base, base_t       # nothing beats the defaults
+    # Overfitting guard: 49 combinations fitted on ~150 questions will always "find" something. Accept a change only when it beats the
+    # defaults by a clear margin AND the sample is big enough; otherwise keep 0.6 / 0.8 (which are vote-share thresholds, i.e. not shop-specific).
+    n = len(rows)
+    margin = 0.02
+    if best_t != base_t and (n < 100 or best_pa - base < margin):
+        print(f"\nBest grid point {best_t} gives PA={best_pa:.4f} vs defaults {base:.4f} on {n} questions: gain < {margin} or n < 100 -> noise, KEEP the defaults.")
+        best_pa, best_t = base, base_t
     pa, (ta, tu) = best_pa, best_t
-    print(f"\nBest on {len(rows)} logged questions: PA={pa:.4f} with threshold_answer={ta:.2f}  threshold_unanswerable={tu:.2f}")
+    print(f"\nRecommended on {n} logged questions: PA={pa:.4f} with threshold_answer={ta:.2f}  threshold_unanswerable={tu:.2f}  (defaults: {base:.4f})")
     print('Use:  --set agent.threshold_answer=%.2f --set agent.threshold_unanswerable=%.2f' % (ta, tu))
-    print("(1.01 means 'never answer' for that kind. Small samples overfit: sanity-check against the defaults 0.6 / 0.8.)")
+    print("Calibrate on HELD-OUT SHOPS only (train_eval does), never on public_test submissions: 5 tries/day tuned on the public board will not carry over to the private shops.")
     return {"threshold_answer": ta, "threshold_unanswerable": tu, "PA": pa}
 
 

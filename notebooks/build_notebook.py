@@ -39,7 +39,8 @@ RUN_MODE      = "smoke,preflight"   # một hoặc NHIỀU chế độ, cách nh
                               #  gợi ý: phiên 1 "smoke,preflight,build_exemplars,train_eval" · phiên 2 "build_exemplars_all,public_test"
 RUN_TESTS     = True          # chạy pytest ở bước kiểm tra
 AUTO_TUNE     = True          # dùng kết quả preflight (auto_tune.json): tự giảm context / số lượt bỏ phiếu nếu VRAM sát trần hoặc không kịp giờ
-PREFLIGHT_N   = 6             # số câu train thật dùng để đo (RUN_MODE = "preflight")
+PREFLIGHT_BIZ = ""            # shop dùng để đo (để trống = tự chọn 1 shop của train)
+PREFLIGHT_N   = 8             # số câu train thật dùng để đo (RUN_MODE = "preflight")
 SESSION_HOURS = 11.0          # giới hạn phiên (Kaggle 12 giờ, chừa dư): agent tự dừng ĐÚNG HẠN, gộp kết quả, rồi chạy lại phiên sau với RESUME
 STAGGER_S     = 90            # giãn cách giữa các tiến trình khi nạp model (tránh tràn RAM 29 GB của Kaggle)
 NUM_PROCS     = 0             # số tiến trình song song, mỗi tiến trình 1 GPU (0 = tự đếm GPU; T4 x2 -> 2, nhanh gấp đôi)
@@ -69,6 +70,8 @@ def run(cmd, check=True, cwd=None, env=None):
     e = dict(os.environ, PYTHONHASHSEED="0", PYTHONUNBUFFERED="1", TOKENIZERS_PARALLELISM="false")
     if env:
         e.update(env)
+    if cwd is None and "REPO" in globals():
+        cwd = str(REPO)                      # always run from the repo, whatever the kernel's current directory is
     p = subprocess.Popen(cmd, shell=shell, cwd=cwd, env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     for line in p.stdout:
         print(line, end="")
@@ -112,6 +115,9 @@ else:
     subprocess.run(["git", "-C", str(REPO), "remote", "set-url", "origin", GITHUB_REPO])   # do not keep the token in .git/config
 os.chdir(REPO)
 sys.path.insert(0, str(REPO))
+_missing = [f for f in ("scripts/download_model.py", "scripts/merge_shards.py", "datamate/run.py", "configs/t4_kaggle.json") if not (REPO / f).exists()]
+if _missing:
+    raise FileNotFoundError(f"repo {REPO} is missing {_missing}: push the whole project (scripts/, configs/, datamate/ ...) to GitHub, then re-run this cell")
 from datamate.session import import_previous_outputs, remaining_budget_s
 for line in import_previous_outputs("/kaggle/input", WORK):       # continue a previous session (its output attached via Add Data -> Notebook Output)
     print("restored previous run:", line)
@@ -159,6 +165,7 @@ print("\\nSMOKE TEST OK")
 cells.append(MD("## 4 · Model và dữ liệu thật (bỏ qua khi chỉ chạy `smoke`)"))
 cells.append(CODE('''
 if NEEDS_GPU:
+    os.chdir(REPO)                           # relative paths (scripts/, configs/) must resolve even after a kernel restart / re-run
     if MODEL_DIR:
         mdir = Path(MODEL_DIR)
     else:   # pick the disk with the most free space; /kaggle/working is only ~20 GB (and would be saved as notebook output)
@@ -169,6 +176,7 @@ if NEEDS_GPU:
     if "14b" in MODEL_ID.lower() and CONFIG.endswith("t4_kaggle.json"):
         CONFIG = "configs/t4_kaggle_14b.json"
         print("MODEL_ID is 14B -> CONFIG switched to", CONFIG)
+        STAGGER_S = max(STAGGER_S, 240)   # 30 GB of weights per process: let the first one finish loading before the second starts (Kaggle RAM ~29 GB)
     if "8b" in MODEL_ID.lower() and CONFIG.endswith("t4_kaggle_14b.json"):
         CONFIG = "configs/t4_kaggle.json"
         print("MODEL_ID is 8B -> CONFIG switched to", CONFIG)
@@ -237,6 +245,7 @@ cells.append(MD("""
 > Để so sánh các cấu hình với nhau hãy dùng `train_eval` (có đáp án), đừng đốt lượt nộp (5/ngày).
 """))
 cells.append(CODE('''
+os.chdir(REPO)
 def need(kind):
     if kind not in SPLITS:
         raise FileNotFoundError(f"split '{kind}' not found. Set DATA_ROOT to the folder that contains {kind}/questions.jsonl and {kind}/data/")
@@ -306,11 +315,14 @@ for MODE in MODES:
     if MODE == "preflight":
         # measure on the REAL GPU with a few real questions: model load time, sec/question, peak VRAM/RAM -> settings for the long run
         split, out = need("train"), WORK / "preflight"
+        # ONE shop (loading a shop costs 0.5-2.5 min): the questions share the prompt prefix exactly as in the real run, so the measured
+        # sec/question includes prefix reuse. A shop that belongs to the hold-out fold is avoided (no exemplars are used here anyway).
+        PREFLIGHT_BIZ = PREFLIGHT_BIZ or sorted({json.loads(l)["business_id"] for l in open(split / "questions.jsonl", encoding="utf-8") if l.strip()})[1]
         shutil.rmtree(out, ignore_errors=True)
         out.mkdir(parents=True)
         cmd = [sys.executable, "-m", "datamate.run", "--data_dir", str(split), "--out", str(out / "submission.jsonl"), "--logs", str(out / "logs"),
                "--config", CONFIG, "--set", f'model_path="{MODEL_DIR}"', "--set", 'agent.exemplars_path="none"',
-               "--exclude_fold", HOLDOUT_FOLD, "--limit", str(PREFLIGHT_N), "--eval"]
+               "--business", PREFLIGHT_BIZ, "--limit", str(PREFLIGHT_N), "--eval"]
         run(cmd, env={"CUDA_VISIBLE_DEVICES": "0"}, check=False)
         target = SPLITS["public_test"] / "questions.jsonl" if "public_test" in SPLITS else None
         n_target = sum(1 for _ in open(target, encoding="utf-8")) if target else 1000

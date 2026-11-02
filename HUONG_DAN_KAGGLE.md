@@ -114,3 +114,11 @@ Với `AUTO_TUNE = True`, các lần chạy sau (`train_eval`, `build_exemplars`
 | Đóng gói Docker | `scripts/docker_selftest.sh` (build + chạy `--network none` + validate, không cần GPU/model) | chạy ở máy có Docker; rồi chạy thật 1 lát public test trên máy GPU |
 
 Mình đã chạy `predict.sh` đúng như container sẽ chạy (môi trường offline, mock LLM) ở cả chế độ 1 và 2 tiến trình: kết quả giống hệt nhau và qua `validate_submission`. Mình **không** build được Docker thật (môi trường của mình không có Docker daemon).
+
+## 10. Cách làm để điểm private không thấp hơn public (tránh overfit)
+
+- **Shop private là shop mới.** Luôn đo bằng `train_eval` (giữ lại ~1/5 số shop, bank ví dụ `exemplars_safe.jsonl` không thấy các shop đó). Số này mới là ước lượng trung thực; điểm trên shop đã dùng dựng ví dụ sẽ cao ảo.
+- **Không chỉnh theo bảng xếp hạng public.** 5 lượt/ngày chỉnh theo điểm public chỉ khớp 14 shop public, không chuyển sang private. Dùng public để kiểm tra "bài nộp hợp lệ, điểm cùng cỡ với train_eval", không để tối ưu.
+- **Ngưỡng abstain chỉ đổi khi chắc chắn.** `evaluate --calibrate` giờ chỉ đề xuất ngưỡng khác mặc định (0,6 / 0,8) khi có ≥ 100 câu và hơn mặc định ≥ 0,02 PA; còn lại giữ mặc định.
+- **Bank ví dụ không để một shop chi phối.** `build_exemplars.py` giới hạn 25 ví dụ mỗi shop (`--max_per_business`).
+- **Không dùng dữ liệu test** để huấn luyện, dựng ví dụ hay gán nhãn (script từ chối đường dẫn có `public_test`/`private_test`).
