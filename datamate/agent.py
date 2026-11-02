@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 
 from .answer_format import answer_key, make_record
 from .llm import LLMBackend
+from .qnorm import Vocab, amounts_note, default_vocab, normalize_question
+from .rulebook import select_rulebook
 from .prompts import build_empty_repair_messages, build_messages, build_repair_messages
 from .retrieval import ExemplarBank
 from .sandbox import ExecResult, LoadInfo, SandboxClient
@@ -74,7 +76,37 @@ class BusinessContext:
 
     def __init__(self, business_id: str, info: LoadInfo):
         self.business_id = business_id
+        self.evidence = ""            # README-independent text about this shop (its questions, table/column names): used to pick rulebook rows
+        self.full_rulebook = ""       # the whole split rulebook, re-selected with a smaller budget when the prompt is too long
         self.info = info
+        self._vocab = None
+
+    def vocab(self):
+        """Default Vietnamese vocabulary extended with this shop's own words (README, profile): brands/product names are then never 'repaired'."""
+        if self._vocab is None:
+            import copy
+
+            v = copy.deepcopy(default_vocab())
+            try:
+                v.add_text(self.info.readme + "\n" + self.info.profile)
+            except Exception:  # noqa: BLE001
+                pass
+            self._vocab = v
+        return self._vocab
+
+    def lexicon(self):
+        if getattr(self, '_lex', None) is None:
+            import copy
+
+            from .slang import default_lexicon
+
+            lx = copy.deepcopy(default_lexicon())
+            try:
+                lx.add_text(self.info.readme + "\n" + self.info.profile)
+            except Exception:  # noqa: BLE001
+                pass
+            self._lex = lx
+        return self._lex
 
 
 class DataMateAgent:
@@ -94,9 +126,15 @@ class DataMateAgent:
             msgs = build_messages(question, as_of, variant, ctx.info.readme, rulebook, ctx.info.profile, exemplars, budgets)
             if self.llm.count_tokens(msgs) <= max_in:
                 break
-            budgets = {k: int(v * 0.75) for k, v in budgets.items()}
+            # shrink the README / profile / examples first; the rulebook is the source of truth for the answers and is re-selected
+            # (whole rows dropped, never cut mid-text) only when that is not enough
+            budgets["readme"] = max(800, int(budgets["readme"] * 0.7))
+            budgets["profile"] = max(1800, int(budgets["profile"] * 0.8))
             if len(exemplars) > 1:
                 exemplars = exemplars[:-1]
+            if budgets["readme"] <= 800 and budgets["profile"] <= 1800 and len(exemplars) <= 1 and ctx.full_rulebook:
+                budgets["rulebook"] = max(6000, int(budgets["rulebook"] * 0.85))
+                rulebook = select_rulebook(ctx.full_rulebook, ctx.info.readme, budgets["rulebook"], ctx.evidence)
         return msgs
 
     # ------------------------------------------------------------------ one question
@@ -107,7 +145,19 @@ class DataMateAgent:
             stages = [stages[0]]
         max_repairs = 0 if self.fast_mode else int(self.a["max_repairs"])
         limit = float(self.a["per_question_time_s"])
-        exemplars = self.bank.search(question, int(self.a["n_exemplars"]))
+        try:
+            qn = normalize_question(question, ctx.vocab(), lex=ctx.lexicon())
+        except Exception:  # noqa: BLE001 - normalisation is a help, never a failure point
+            qn = question
+        exemplars = self.bank.search(qn, int(self.a["n_exemplars"]))
+        try:
+            amt = amounts_note(question)
+        except Exception:  # noqa: BLE001
+            amt = ""
+        if qn.strip() != question.strip():
+            question = f"{question.strip()}\n(Reading with shorthand and typing artefacts expanded automatically - may be imperfect, the original above is authoritative: {qn.strip()})"
+        if amt:
+            question = f"{question.strip()}\n(Amounts in the question: {amt})"
         cands: list[Candidate] = []
         done = 0
         for st in stages:

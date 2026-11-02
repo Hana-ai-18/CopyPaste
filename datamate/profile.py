@@ -17,10 +17,24 @@ def _short(v, n=40) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-def _date_format(sample: pd.Series) -> str | None:
+_MONTH_WORD = re.compile(r"^\d{1,2}\s*(thg|th|tháng|thang)\s*\d{1,2}", re.I)
+_DATE_NAME = re.compile(r"ngay|date|thoi gian|han |day$|time", re.I)
+
+
+def _date_format(sample: pd.Series, name: str = "") -> str | None:
     vals = sample.dropna().astype(str).head(100)
     if vals.empty:
         return None
+    if vals.map(lambda x: bool(_MONTH_WORD.match(x.strip()))).mean() >= 0.9:
+        return "text with month word, e.g. '1 thg 6 2025'"
+    from .textutil import strip_accents
+    if _DATE_NAME.search(strip_accents(str(name)).lower() + " "):              # a date-named column in any other text style
+        try:
+            u = pd.Series(sample.dropna().astype(str).unique()[:200])
+            if len(u) >= 3 and u.str.contains(r"\d").mean() > 0.9 and parse_dates(u).notna().mean() >= 0.9:
+                return "mixed / other date text (several formats in one column)"
+        except Exception:
+            pass
     iso = vals.map(lambda x: bool(_ISO.match(x))).mean()
     dmy = vals.map(lambda x: bool(_DMY.match(x))).mean()
     if iso >= 0.9:
@@ -53,7 +67,7 @@ def _column_line(name: str, s: pd.Series, detail: int) -> str:
         if nun <= 8 and nn:
             extra.append("values=" + str(sorted(s.dropna().unique().tolist())[:8]))
     else:
-        fmt = _date_format(s)
+        fmt = _date_format(s, name)
         if fmt:
             try:
                 p = parse_dates(pd.Series(s.dropna().unique()))   # whole column (via distinct values), not a prefix

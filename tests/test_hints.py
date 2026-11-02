@@ -58,3 +58,47 @@ def test_wide_schema_keeps_every_table():
     tabs = {f"t{i}": pd.DataFrame({f"column_number_{j}": ["some text value"] * 3 for j in range(14)}) for i in range(14)}
     txt = profile_tables(tabs, max_chars=2500)
     assert all(f"t{i}" in txt for i in range(14))
+
+
+def _fake_rulebook(rows_per=40):
+    gen = "".join(f"| Luật chung {i} về doanh thu và đơn hàng số {i} | nội dung dài dài dài dài dài dài dài dài dài |\n" for i in range(rows_per))
+    ind = "".join(f"### {n}\n| Luật | Mặc định |\n|---|---|\n| luật ngành {n} | nội dung |\n\n" for n in ["Cà phê", "Nhà thuốc", "Sửa xe"])
+    return ("# R\n\n## 1. Đơn hàng\n| Luật | Mặc định |\n|---|---|\n" + gen + "\n## 6. Theo ngành\nchung\n\n" + ind +
+            "## 7. Không trả lời được\nKHÔNG-TRẢ-LỜI-MARKER\n\n## 8. Cách ghi trong file\nCÁCH-GHI-MARKER\n\n## 9. Đáp án và chấm điểm\nFORMAT-MARKER\n")
+
+
+def test_rulebook_never_cut_in_the_middle_and_keeps_format_chapters():
+    from datamate.rulebook import select_rulebook
+
+    rb = _fake_rulebook()
+    out = select_rulebook(rb, "File Excel", 2500, evidence="doanh thu don hang so 7")
+    assert len(out) <= 2500 and "\n...\n" not in out
+    assert all(m in out for m in ("KHÔNG-TRẢ-LỜI-MARKER", "CÁCH-GHI-MARKER", "FORMAT-MARKER"))
+    assert "Luật chung 7 " in out                       # row that matches the shop's own questions survives pruning
+
+
+def test_rulebook_industry_chosen_from_evidence_not_readme():
+    from datamate.rulebook import select_rulebook
+
+    rb = _fake_rulebook(5)
+    out = select_rulebook(rb, "File Excel xuất từ phần mềm", len(rb) - 50, evidence="phieu bao hanh sua xe luot xe bien so sua xe")
+    assert "luật ngành Sửa xe" in out and "luật ngành Cà phê" not in out
+    keep_all = select_rulebook(rb, "File Excel", len(rb) - 50, evidence="chung chung")
+    assert all(n in keep_all for n in ["Cà phê", "Nhà thuốc", "Sửa xe"])        # no evidence -> never guess
+
+
+def test_variant_hint_groups_same_person_spellings():
+    from datamate.hints import _variant_hint
+
+    df = pd.DataFrame({"Thợ": ["A.Đức", "Đức", "a Đức", "a Phúc", "A.Phúc", "Phúc", "An", "a An"] * 3, "Tiền": range(24)})
+    h = "\n".join(_variant_hint(df))
+    assert "'Thợ'" in h and "3 distinct" in h.replace("only 3 distinct", "3 distinct")
+    plain = pd.DataFrame({"x": ["Trà đào", "Cà phê", "Bạc xỉu", "Sting"] * 5})
+    assert _variant_hint(plain) == []
+
+
+def test_profile_flags_month_word_and_mixed_dates():
+    s = pd.DataFrame({"Ngày tháng": ["1 thg 6 2025", "2 thg 6 2025", "3 thg 6 2025", "4 thg 6 2025", "5 thg 7 2025"] * 3, "x": range(15)})
+    assert "DATE-LIKE" in profile_tables({"t": s})
+    m = pd.DataFrame({"Ngày": ["2025-01-01 00:00:00", "01/01/2025", "02/01/2025", "03/01/2025", "2025-01-05"] * 3, "x": range(15)})
+    assert "DATE-LIKE" in profile_tables({"t": m})

@@ -34,6 +34,34 @@ Chưa có ca nào ở đây được đo trên GPU: mọi cải thiện về PA 
 | Khách/mặt hàng tên gần giống, sai dấu | `fuzzy_find`, `contains_vi` [T] |
 | Hoà điểm khi xếp hạng | `rank_top` tie-break theo mã [T] |
 
+### B2. Viết tắt, gõ Telex, không dấu (module `datamate/qnorm.py`, chạy trước khi gọi model)
+Đọc 4.000 câu hỏi thấy ba kiểu nhiễu chính: (1) viết tắt (`dthu`, `bnhiu`, `hnay`, `trc`, `mik`, `z`), (2) **gõ Telex chưa đổi** (`tieenf`=tiền, `dduwowcj`=được, `toongr`=tổng, `thangs`=tháng), (3) không dấu / sai dấu.
+| Việc | Cách làm | Kết quả đo |
+|---|---|---|
+| Giải mã Telex | tách (nền, dấu thanh), kiểm tra bằng từ vựng có trong rulebook/README/câu hỏi/profile của shop, và nếu từ lạ thì kiểm tra bằng **luật âm tiết tiếng Việt** (phụ âm đầu + vần hợp lệ + dấu hợp lệ) | khôi phục đúng 99,9% từ trên câu train; **100% (368/368) trên từ bị giấu khỏi từ vựng** |
+| Từ viết tắt | bảng viết tắt không mơ hồ (`dthu`→doanh thu, `bn`→bao nhiêu…). Bỏ những từ mơ hồ (`cn`, `km`, `dt`) | có test |
+| `Th2/2026`, `T11/2025`, `q3` | đổi thành "tháng 2/2026", "quý 3"; `T2` đứng một mình giữ nguyên (thứ Hai) | có test |
+| Số tiền `500k`, `1tr5`, `2 triệu`, `2 củ` | thêm dòng "Amounts: 500k = 500000" cho model | có test |
+| Không đụng vào | tên hàng/thương hiệu (`Heineken max`, `coffee`), `50k`, `10ml`, `5kg` | có test |
+| Dùng bản đã chuẩn hoá để | tìm ví dụ few-shot, chọn mục rulebook, và đưa thêm dòng "Reading: …" vào prompt (câu gốc vẫn là bản có thẩm quyền) | |
+Đo độ chính xác tìm ví dụ few-shot (giao 6 ví dụ gần nhất với câu sạch) khi câu bị nhiễu: viết tắt 0,88→1,00; Telex 0,73→0,98; viết tắt + Telex 0,64→1,00; không dấu 1,00→1,00.
+**Tiếng lóng / viết tắt Gen Z, kể cả kiểu chưa gặp (`datamate/slang.py`)**: bảng lóng đã biết (`ko/hok/hông`=không, `dc/đc`=được, `mik`=mình, `bn/bnhiu`, `ntn`, `trc`…) cộng 3 luật tổng quát chỉ chạy trên từ **không có trong tài liệu**: (1) kéo dài chữ (`nhieeeeu`, `khachhh`), (2) đổi chữ kiểu Gen Z (`zui`=vui, `fai`=phải, `wa`=quá), (3) viết tắt kiểu "giữ chữ đầu mỗi tiếng" (`dthu`=doanh thu, `tbinh`=trung bình). Phòng sửa nhầm: không đụng từ có dấu, tên riêng viết hoa, từ có thể là một âm tiết tiếng Việt (`Linh`, `Vinh`), từ có trong README/profile của shop, và không đoán khi có hai cách đọc ngang nhau.
+Đo trên dữ liệu nhiễu tự tạo (không phải điểm thi): kéo dài chữ đúng 98% (sai 1%), đổi chữ 85% (sai 7%), viết tắt hai tiếng mới đúng 40% (sai 11%, phần còn lại để nguyên). Kiểm tra sửa nhầm trên 471 từ lạ lấy từ bảng dữ liệu (tên hàng, tên khách…): sửa 2 từ (`cty`, `hong`, cả hai đều là viết tắt thật) = 0,4%.
+
+### B3. Sửa lỗi chính tả (module `datamate/spell.py`, chạy trong `normalize_question`, sau Telex/lóng)
+Quét 4.000 câu: lỗi thật gồm sai/thiếu dấu thanh (`đươc`), thiếu chữ cuối (`tổg`, `cộg`, `bìh`, `đag`), thừa chữ (`lênn`, `nàoo`), chữ đầu kiểu Gen Z có dấu (`wán`, `júp`, `dzạ`, `zô`), dính chữ (`nhiềuđơn`, `caonhất`, `ngàynào`), nửa Telex (`đuowc`), phương ngữ (`kòn`, `ngừi`, `nhứt`).
+| Lỗi | Cách sửa | Chốt chặn |
+|---|---|---|
+| Từ có dấu nhưng không phải âm tiết hợp lệ | tìm từ trong vốn từ cách ≤1 ký tự (bỏ dấu thanh), ưu tiên cùng dấu thanh và "thêm/bớt đúng 1 chữ" | từ ứng viên xuất hiện ≥3 lần, hơn ứng viên thứ hai ≥2 lần; hoà thì để nguyên |
+| Chữ đầu `z j w f dz` có dấu | thử d/v/gi/r, qu, ph | chỉ khi duy nhất; bảng `COMMON` cho các ca rất phổ biến (`zô`→vô, `dzạ`→dạ, `kòn`→còn, `ngừi`→người) |
+| Dính chữ | tách 2 âm tiết, mỗi nửa xuất hiện ≥10 lần | chỉ khi cách tách tốt nhất hơn hẳn cách thứ hai |
+| Không dấu, gõ sai | chỉ sửa sang dạng không dấu của từ gần nhất (không đoán dấu) | ≥4 chữ, ứng viên là âm tiết hợp lệ, duy nhất |
+| Không đụng | từ đã biết, từ trong README/profile của shop, tên riêng viết hoa giữa câu, âm tiết hợp lệ (`Linh`, `khát`) | |
+Đo (tự tạo, không phải điểm thi): sửa nhầm trên 471 từ lấy từ bảng dữ liệu shop: **0** (trước khi thêm chốt chặn: 9%); lỗi giả lập thừa chữ cuối: sửa đúng 79%, sai 4%; dính hai từ thường gặp: đúng 46%, sai 0%; thiếu chữ cuối: đúng 16%, sai 10%; đổi sai dấu thanh sang một âm tiết khác *hợp lệ*: **không phát hiện được** (4% đúng) vì không thể phân biệt với từ thật nếu không có ngữ cảnh.
+Giới hạn: sai dấu thanh tạo thành từ có thật (ví dụ `nhật` thay `nhất`) và lỗi chính tả ở tên riêng/tên hàng vẫn do model đọc; bản gốc luôn được giữ trong prompt, bản sửa chỉ là dòng "Reading: …".
+
+Giới hạn chung: câu **không dấu và gõ Telex lẫn nhau**, hoặc kiểu viết tắt chưa có trong bảng, vẫn do model tự đọc.
+
 ## C. Unanswerable (ca dễ mất điểm nhất: sai bị −1)
 - Train: câu hỏi tồn kho/công nợ/giá vốn/hạn dùng/thanh toán mà shop **không ghi nhận** thì đáp án gold là unanswerable.
 - Hệ thống tự liệt kê "shop này có ghi nhận gì" bằng so khớp tên bảng/cột [D]. Đối chiếu với đáp án train (các câu tồn kho, công nợ, hạn dùng, thanh toán, giá vốn): **0 dương tính giả; 1 bỏ sót** trên khoảng 200 câu. Lưu ý: vài regex được chỉnh sau khi nhìn dữ liệu train nên đây không phải con số độc lập. Chỉ là *gợi ý*, model vẫn phải kiểm tra rulebook/dữ liệu.

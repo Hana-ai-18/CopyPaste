@@ -10,6 +10,7 @@ import re
 
 import pandas as pd
 
+from .textutil import vi_key
 from .helpers import anon_customer, norm_status, strip_accents, to_num
 
 _ID_NAME = re.compile(r"(^|[^a-z])(ma|so|id|code|no)([^a-z]|$).*(don|hoa don|order|invoice|bill|phieu)|(don|hoa don|order|invoice|bill|phieu).*(ma|so|id|code|no)([^a-z]|$)|^(order|invoice|bill)")
@@ -165,6 +166,38 @@ def capability_hints(tables: dict[str, pd.DataFrame]) -> list[str]:
     return out
 
 
+_HONORIFIC = {"a", "anh", "c", "chi", "e", "em", "ong", "ba", "co", "chu", "bac", "thay", "mr", "ms", "ky", "thuat", "vien"}
+
+
+def _variant_key(v: str) -> str:
+    toks = [t for t in vi_key(v).split() if t]
+    while len(toks) > 1 and toks[0] in _HONORIFIC:
+        toks = toks[1:]
+    return " ".join(toks)
+
+
+def _variant_hint(df: pd.DataFrame) -> list[str]:
+    """Same entity spelled several ways inside one column (worker 'A.Đức' / 'Đức' / 'a Đức', product case/accents): group them so the model
+    does not count them as different people/items (rulebook: names for the same thing are the same thing)."""
+    out = []
+    for c in df.columns:
+        s = df[c]
+        if not (s.dtype == object or pd.api.types.is_string_dtype(s)):
+            continue
+        vals = s.dropna().astype(str)
+        nun = vals.nunique()
+        if nun < 3 or nun > 80:
+            continue
+        groups: dict[str, list[str]] = {}
+        for v in vals.unique():
+            groups.setdefault(_variant_key(v), []).append(v)
+        multi = {k: g for k, g in groups.items() if k and len(g) > 1}
+        if multi and len(multi) >= max(1, len(groups) // 4):
+            ex = "; ".join("/".join(map(repr, g[:4])) for g in list(multi.values())[:4])
+            out.append(f"- column {str(c)!r}: {nun} raw values but only {len(groups)} distinct once case/accents/honorific (a, anh, chị...) are ignored, e.g. {ex} -> group them before counting")
+    return out[:3]
+
+
 def structure_hints(tables: dict[str, pd.DataFrame], max_chars: int = 2600) -> str:
     lines: list[str] = []
     for name, df in tables.items():
@@ -182,6 +215,7 @@ def structure_hints(tables: dict[str, pd.DataFrame], max_chars: int = 2600) -> s
             block += _status_hint(df)
             block += _customer_hint(df)
             block += _quality_hint(df)
+            block += _variant_hint(df)
             if block:
                 lines.append(f"[{name}]")
                 lines += block

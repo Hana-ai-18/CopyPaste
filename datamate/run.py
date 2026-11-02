@@ -205,7 +205,12 @@ def main(argv: list[str] | None = None) -> int:
                 info = sb.load(bdir, biz, rulebook_path if rulebook_path.exists() else None,
                                calendar_path if calendar_path.exists() else None, cfg["agent"]["max_profile_chars"])
                 ctx = BusinessContext(biz, info)
-                rb_biz = select_rulebook(rulebook, info.readme, int(cfg["agent"]["max_rulebook_chars"]))
+                from .qnorm import normalize_question
+
+                evidence = " ".join(normalize_question(x["question"]) for x in qs) + " " + " ".join(
+                    str(t) + " " + " ".join(map(str, cols if isinstance(cols, (list, tuple)) else getattr(cols, "columns", []))) for t, cols in info.tables.items())
+                ctx.evidence, ctx.full_rulebook = evidence, rulebook
+                rb_biz = select_rulebook(rulebook, info.readme, int(cfg["agent"]["max_rulebook_chars"]), evidence)
                 err = None
                 print(f"[run] {biz}: {len(info.tables)} tables loaded in {time.time() - t:.1f}s warnings={info.warnings[:2]}", flush=True)
             except Exception as e:  # noqa: BLE001
