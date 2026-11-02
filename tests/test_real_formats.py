@@ -137,11 +137,11 @@ def test_norm_status_all_real_spellings():
 
     want = {
         "hoan_thanh": ["Đã hoàn thành", "Hoàn thành", "Thành công", "đã xong", "xong", "Xong", "ok", "Đã giao", "đã lấy", "completed", "Đã nhập hàng"],
-        "huy": ["Đã hủy", "hủy", "hủy đơn", "Đã hủy đơn", "khách hủy", "Huỷ đơn", "Đã huỷ", "cancel", "cancelled", "Hủy", "Huỷ"],
+        "huy": ["Không giao được", "Đã hủy", "hủy", "hủy đơn", "Đã hủy đơn", "khách hủy", "Huỷ đơn", "Đã huỷ", "cancel", "cancelled", "Hủy", "Huỷ"],
         "tra_hang": ["Đã trả hàng", "trả hàng", "Trả hàng", "Đã hoàn hàng", "hàng trả về", "Đổi trả", "Hoàn trả", "trả lại", "returned",
                      "trả lại hàng", "khách mang trả", "khách trả lại", "Khách trả"],
         "dang_giao": ["Đang giao dịch", "Đang giao hàng", "Đang vận chuyển", "Đang xử lý", "Đang giao", "đang gửi", "shipping", "Chờ giao", "đang ship", "chưa giao"],
-        "khac": ["Không giao được", "nhập đầu kỳ", "pin yếu", None],
+        "khac": ["nhập đầu kỳ", "pin yếu", None],
     }
     for label, vals in want.items():
         got = norm_status(pd.Series(vals)).tolist()

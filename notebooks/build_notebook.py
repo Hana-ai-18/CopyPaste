@@ -49,12 +49,12 @@ RESUME        = True          # chạy tiếp từ kết quả đã có (hữu �
 MODEL_ID      = "Qwen/Qwen3-8B"   # ""= dùng configs/model.json (Qwen3-14B). Trên Kaggle T4: 8B + t4_kaggle.json (nhanh) hoặc ""/14B + t4_kaggle_14b.json (tốt hơn, chậm hơn)
 MODEL_REVISION = ""           # để trống = dùng revision trong configs/model.json (null = bản mới nhất)
 MODEL_DIR     = ""            # để trống = /kaggle/temp/models/llm (nếu có) hoặc <WORK>/models/llm; hoặc đường dẫn model có sẵn
-CONFIG        = "configs/t4_kaggle.json"           # T4 + Qwen3-8B; dùng configs/t4_kaggle_14b.json nếu MODEL_ID="" (14B); máy RTX 5090: configs/rtx5090_vllm.json
+CONFIG        = "configs/t4_kaggle_fast.json"           # T4 + Qwen3-8B; dùng configs/t4_kaggle_14b.json nếu MODEL_ID="" (14B); máy RTX 5090: configs/rtx5090_vllm.json
 
 DATA_ROOT     = "/kaggle/input/datasets/gmnguynhng/copypaste"   # thư mục dataset đã up; sai/không tồn tại thì tự dò trong /kaggle/input
 HOLDOUT_FOLD = "0/5"          # K/N: giữ lại ~1/5 SỐ SHOP của train làm tập đánh giá (shop test là shop CHƯA THẤY -> phải đo theo shop, không theo câu)
 EXEMPLAR_N    = 400           # số câu train (ngoài shop giữ lại) dùng để dựng ví dụ few-shot
-EVAL_N        = 150           # số câu của các shop giữ lại dùng để đánh giá / hiệu chỉnh ngưỡng
+EVAL_N        = 40           # số câu của các shop giữ lại dùng để đánh giá / hiệu chỉnh ngưỡng
 WORK          = "/kaggle/working"
 '''))
 

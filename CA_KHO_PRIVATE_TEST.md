@@ -74,7 +74,39 @@ Giới hạn chung: câu **không dấu và gõ Telex lẫn nhau**, hoặc kiể
 | 3 biến thể cùng sai giống nhau → đồng thuận giả (confidence 1.0) | **[?]** chưa có cách tin cậy; chỉ giảm bằng profile tốt hơn và few-shot |
 | Hết thời gian / OOM | chia nhỏ prefill, giảm ngữ cảnh, abstain |
 
+## D2. Giảm lỗi "model áp sai luật" (module `datamate/intent.py`, chạy mỗi câu)
+Không thể bắt model "hiểu luật" tuyệt đối, nên các phần dễ sai nhất được tính bằng code, model chỉ nhận kết quả:
+| Lỗ hổng | Cách vá | Trạng thái |
+|---|---|---|
+| Model tính sai kỳ thời gian (tuần thứ Hai–CN, tháng không ghi năm, "tháng này", "hôm qua", quý, so kỳ trước/cùng kỳ) | `resolve_periods` tính khoảng ngày từ `as_of` đúng luật rulebook §2 rồi đưa vào prompt ("dùng đúng các ngày này"); nếu biết khoảng ngày dữ liệu thì ghi chú kỳ nằm ngoài dữ liệu = unanswerable | [T] 6 test; đối chiếu 62 câu public đã tính tay: không lệch |
+| Quên luật theo loại số liệu (doanh thu bỏ đơn huỷ/trả, đếm đơn, tỉ lệ huỷ, % thay đổi, xếp hạng theo số lượng quy đổi, khách lẻ, size M/L, nhóm hàng) | `rule_checklist` chọn đúng các luật áp dụng cho câu đó (tối đa 6 dòng) | [T] |
+| Bỏ dòng sau `as_of` khi hỏi "hôm nay / tuần này / tháng này" | thêm vào checklist | [G] |
+| Hỏi "nhóm hàng" khi shop không có cột nhóm | capability hint mới "product group" + checklist: không có cột thì unanswerable | [T][G] |
+| Mã chạy được nhưng vi phạm luật rõ ràng (doanh thu không lọc trạng thái, không lọc ngày, phần trăm ghi dạng phân số, tiền lẻ, đếm đơn không loại trùng) | `audit_code` kiểm tra tĩnh sau khi chạy → 1 vòng sửa có chỉ dẫn cụ thể; nếu sửa không được thì giữ kết quả cũ | [T] |
+| Cả 3–5 lượt cùng sai giống nhau (đồng thuận giả) | nếu mọi phiếu cho đáp án top vẫn vi phạm kiểm tra tĩnh → độ tin cậy ×0,75 (unanswerable cần ≥0,8 nên sẽ bỏ trống; câu thường vẫn ≥0,6 nên vẫn trả lời) | [T] giảm thiểu, **không** loại bỏ |
+Giới hạn: kiểm tra tĩnh chỉ bắt lỗi "rõ ràng" (dùng regex trên mã); lỗi tinh vi (cộng nhầm cột cấp đơn, chọn nhầm cột) vẫn do model và phần hint cấu trúc xử lý. Chưa đo trên model thật.
+
+### D3. Lỗi thật đo được từ preflight update7 (biz_102, 8 câu train): PA −0,125
+4 câu sai đều có `confidence = 1,0` (3/3 lượt đồng thuận) và **cùng một nguyên nhân**: `drop_duplicates('Mã đơn hàng')` rồi cộng cột `Tổng tiền`. Cột này là thành tiền của từng **dòng**, nên chỉ còn một dòng mỗi đơn (doanh thu hôm nay 4.831.900 thay vì 11.111.900; % tháng −3,82 thay vì −1,79; top khách sai). Nguồn lỗi: ví dụ mồi viết `drop_duplicates('Ma don')['Tong tien'].sum()` và quy tắc prompt "order-level amounts counted once per order"; model chép nguyên.
+Đã vá: (1) hàm `order_amounts(rows, order_col, amount_col)` tự nhận ra số tiền là tổng đơn hay tiền từng dòng; (2) ví dụ mồi và prompt viết lại; (3) hint "MONEY per LINE" theo dữ liệu; (4) `audit_code` bắt "drop_duplicates rồi sum cột tiền cấp dòng" và buộc sửa. Kiểm chứng trên dữ liệu thật trong sandbox: 11.111.900 và 8.108.700 khớp đáp án; cách tính lại khớp cả −1,79 và top 3 khách. **Chưa chạy lại model**, nên chưa biết PA mới.
+
+**Vá tổng quát, không theo từng ca (D3b).** Vá bằng tên cột hay bằng ví dụ chỉ chặn đúng lỗi đã thấy. Cách tổng quát là kiểm tra *điều mã làm với dữ liệu*, đo lúc chạy trong sandbox (`datamate/lineage.py`): mỗi lần `drop_duplicates(subset=K)` loại dòng, hệ thống xem trong các dòng bị loại có **cột số nào nhận giá trị khác nhau** không (thông tin bị vứt). Nếu mã còn dùng đúng cột đó thì bị buộc sửa (1 vòng) và hạ độ tin cậy nếu vẫn vi phạm. Không phụ thuộc tên cột, tên shop, ngôn ngữ, cách hỏi. Kiểm chứng trên chính mã sai trong log update7 chạy trên dữ liệu thật: bắt cả 2 câu đã thử (doanh thu, top khách); mã đếm đơn đúng (`drop_duplicates` rồi đếm) **không** bị bắt. Quy trình cho lỗi mới: mỗi lỗi sai thật được xếp vào một *lớp* → viết một bộ phát hiện theo lớp (kiểu "mất thông tin", "khoá lọc làm rỗng", "đổi kiểu im lặng") + một test tổng hợp, không viết luật cho riêng câu đó.
+
+**D4. Đường tính thứ hai độc lập + thêm lớp kiểm tra lúc chạy.**
+- `lineage.py` mở rộng thêm 3 lớp lỗi quan sát lúc chạy (không dựa tên cột): (a) `parse_dates` / `to_num` không hiểu ≥1% giá trị → bộ lọc sau đó âm thầm bỏ các dòng đó; (b) `norm_status` trả `khac` (trạng thái chưa phân loại) rồi mã lọc `isin(['huy','tra_hang'])`; (c) `merge` nhân bản dòng bảng trái rồi cộng cột số của bảng trái. Cả ba vào `audit_code` (buộc sửa 1 vòng, hạ độ tin cậy nếu vẫn vi phạm). Thử trên 8 mã thật trong log update7: gắn cờ đúng 5 mã sai/bỏ phiếu, **không** gắn cờ 3 mã đúng.
+- `refcalc.py` (đường tính độc lập): chỉ cho câu "doanh thu / số đơn trong MỘT kỳ" (từ vựng chung, không tên hàng/khách/so sánh/trung bình). Tự suy ra bảng đơn, cột ngày, trạng thái, tiền từ dữ liệu; luật rulebook mặc định viết một lần; không chắc thì "không có ý kiến". Đo trên 30 shop train: có ý kiến 244 câu (~8% tổng số câu train, 58% số câu "đơn giản"), **242 đúng (99,2%)**. Lưu ý: tôi chỉnh engine nhiều vòng dựa trên chính các lỗi train này nên con số lạc quan; chưa có tập độc lập. Trên public: khớp 6/6 với đáp án tay của dev_002 (cùng một người viết, bằng chứng yếu).
+- Chính sách (cập nhật update16): khi đáp án bỏ phiếu **lệch** engine, hoặc model bỏ trống mà engine có đáp án → **nộp giá trị của engine** (bỏ trống chỉ được 0, engine đúng ~99% trên train). Khớp hoặc engine không có ý kiến → giữ nguyên. `unanswerable` không bao giờ bị ghi đè.
+- Phát hiện từ phép đo: trạng thái **"Không giao được" tính như huỷ** (đáp án train biz_118 chỉ khớp theo cách này); `norm_status` đã sửa.
+
 ## E. Rủi ro lớn nhất còn lại (nói thẳng)
 1. Chưa có số PA thật trên model thật. Việc cần làm tiếp: `smoke,preflight` rồi `build_exemplars,train_eval` với hold-out theo shop.
 2. Chọn model (Qwen3-14B vs 8B vs ứng viên mới) chỉ nên quyết sau khi đo bằng cùng bộ hold-out.
 3. Các câu tồn kho / tuổi nợ phụ thuộc mạnh vào khả năng suy luận của model; nên xem riêng PA của nhóm này sau khi chạy.
+
+## D5. update17 - engine-first, more families, safer induction
+
+* `agent.engine_first` (default true): a plain question of the engine's families (revenue / orders in one period, average per order, cancel rate, % change vs the previous period) is answered by `refcalc.py` WITHOUT calling the model. Faster (inference time breaks ties on the leaderboard) and not exposed to sampling noise. Set `"engine_first": false` in the config to go back to model + cross-check.
+* Measured on the 30 train shops (tuned there, so optimistic): 544 answered, 544 correct (revenue/orders 355, avg 67, cancel 84, % change 38); about 82% of the questions the parser accepts. On public (no gold) it answers 43 questions and abstains elsewhere; every "no opinion" falls back to the model path.
+* New in the engine: header table + separate line table (star schema, money = sum of LINE amounts); unique gap-free order code first; date columns without a year are not order dates; merged-cell layouts (code only on the first line) give no opinion for per-order metrics; cache keyed by table fingerprint.
+* `to_num` now reads '1tr090' (1 090 000), '2tr5', '1k5': before, such cells became NaN and sums were silently too small (biz_127: -9% revenue).
+* Known gaps (engine abstains): statuses in a notes column, order data on the first line of each block, several similar order tables, Excel serial dates. These go to the model path.

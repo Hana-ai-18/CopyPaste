@@ -130,9 +130,10 @@ _CAP_RULES = [
     ("product cost (cost of goods, profit, margin)", r"gia von|gia nhap|don gia von|cost|von hang", "cols"),
     ("expiry date / lot", r"han su dung|\bhsd\b|han dung|expir|\blo\b|so lo|ma lo|\blot\b", "cols"),
     ("time of day / shift", r"\bgio\b|\bca\b|khung gio|thoi gian|time|hour", "cols"),
+    ("product group / category (nhóm hàng)", r"nhom hang|nhom sp|nhom san pham|danh muc|category|loai hang|phan loai|ma nhom|^nhom$|group", "cols"),
     ("payment method", r"phuong thuc|hinh thuc|httt|tra bang|thanh toan bang|payment|pttt", "cols"),
 ]
-_CAP_EXCLUDE = re.compile(r"dinh muc|ton toi thieu|ton toi da|ton nho nhat|ton lon nhat|min|max")
+_CAP_EXCLUDE = re.compile(r"nhom khach|khach hang group|customer group|dinh muc|ton toi thieu|ton toi da|ton nho nhat|ton lon nhat|min|max")
 
 
 def _cap_n(name) -> str:
@@ -212,6 +213,9 @@ def structure_hints(tables: dict[str, pd.DataFrame], max_chars: int = 2600) -> s
                     block.append(f"- order id column {str(oid)!r} repeats across rows (one row = one order LINE). "
                                  f"ORDER-level (same on every line of an order; count once per order via drop_duplicates({str(oid)!r})): {order_lv[:12]}. "
                                  f"LINE-level (safe to sum per row): {line_lv[:12]}")
+                    money = [c for c in line_lv if re.search(r"tien|thanh tien|amount|total|tri gia|gia tri|revenue|doanh", _n(c))]
+                    if money:
+                        block.append(f"- MONEY per LINE {money[:4]}: revenue = sum over ALL lines of qualifying orders (after filtering rows by period/status). NEVER drop_duplicates({str(oid)!r}) and then sum these: that keeps a single line per order. order_amounts(rows, {str(oid)!r}, col) does it safely.")
             block += _status_hint(df)
             block += _customer_hint(df)
             block += _quality_hint(df)
