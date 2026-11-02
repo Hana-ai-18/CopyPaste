@@ -51,7 +51,7 @@ def recommend(log_rows: list[dict], run_info: dict, n_questions: int, procs: int
             advice.append(f"Projected {proj:.1f} h > budget {usable_h:.1f} h -> single sample only (~{proj1:.1f} h): accuracy drops; prefer the 8B model or more sessions.")
             proj = proj1
         else:
-            advice.append(f"Even one sample per question needs ~{proj1:.1f} h > {usable_h:.1f} h: use the 8B model, or split the run over several sessions (RESUME).")
+            advice.append(f"Even one sample per question needs ~{proj1:.1f} h > {usable_h:.1f} h: the transformers backend is decode-bound on a T4: use vLLM + AWQ (MODEL_ID='Qwen/Qwen3-8B-AWQ' or 'Qwen/Qwen3-14B-AWQ', batches the variants), or the 8B model, or split the run over several sessions (RESUME).")
             proj = proj1
     else:
         advice.append(f"Projected {proj:.1f} h <= budget {usable_h:.1f} h with the full voting: keep stages [3,5].")

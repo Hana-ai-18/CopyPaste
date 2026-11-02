@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     llm = build_backend(cfg)
     model_load_s = round(time.time() - t_model, 1)
     print(f"[run] backend={llm.name} loaded in {model_load_s}s", flush=True)
-    bank = ExemplarBank.load(cfg["agent"].get("exemplars_path"))
+    bank = ExemplarBank.load(cfg["agent"].get("exemplars_path"), cfg["agent"].get("seed_exemplars_path", "exemplars/seed_exemplars.jsonl"))
     print(f"[run] exemplar bank: {len(bank)} items", flush=True)
     agent = DataMateAgent(llm, sb, cfg, bank)
 

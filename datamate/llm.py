@@ -67,6 +67,7 @@ class HFBackend(LLMBackend):
         self.batch_size = max(1, int(cfg.get("batch_size", 1)))
         self.max_in = int(cfg.get("max_input_tokens", 12000))
         self.prefill_chunk = int(cfg.get("prefill_chunk", 2048))   # 0 = old behaviour (whole prompt in one forward pass)
+        self.stop_code_end = bool(cfg.get("stop_at_code_end", True))   # stop generating when the python block closes (no "### Explanation" after it)
         self.prefix_cache = bool(cfg.get("prefix_cache", True))     # keep the KV cache of the shared prompt prefix between calls
         self._pc, self._pc_ids = None, []
         self.stats_prefill_tokens = self.stats_prompt_tokens = 0
@@ -110,12 +111,49 @@ class HFBackend(LLMBackend):
             except Exception as e:  # noqa: BLE001
                 if "out of memory" not in str(e).lower():
                     raise
-                # CUDA OOM (long prompt / big batch): free the cache, retry the prompts one by one with a 25 % shorter context
+                # CUDA OOM: free everything, then (1) halve the prefill chunk (permanently: the next prompts would hit the same wall) and retry the
+                # same prompt, down to 256 tokens, (2) only then shorten the context by 25 %
                 self._pc, self._pc_ids = None, []
                 self.torch.cuda.empty_cache()
                 for pr in prompts:
-                    outs.extend(self._gen([pr], mx, int(self.max_in * 0.75)))
+                    max_len, done = (self.max_in if self.prefill_chunk > 0 else int(self.max_in * 0.75)), False
+                    for attempt in range(6):
+                        try:
+                            outs.extend(self._gen([pr], mx, max_len))
+                            done = True
+                            break
+                        except Exception as e2:  # noqa: BLE001
+                            if "out of memory" not in str(e2).lower():
+                                raise
+                            self._pc, self._pc_ids = None, []
+                            self.torch.cuda.empty_cache()
+                            if self.prefill_chunk > 256:
+                                self.prefill_chunk //= 2
+                            else:
+                                max_len = int(max_len * 0.75)
+                    if not done:
+                        raise RuntimeError("CUDA out of memory even after halving the prefill chunk and shortening the context")
         return outs
+
+    def _stop_kw(self, prompt_len: int) -> dict:
+        """A reply is ONE python block; the model likes to add an 'Explanation' after it - on a T4 that is 1-3 minutes of wasted decoding.
+        Stop as soon as the generated text contains a closing fence + newline ('```python' is followed by letters, so an OPENING fence never
+        matches). Own criterion instead of generate(stop_strings=...): independent of the tokenizer's vocabulary quirks."""
+        if not getattr(self, "stop_code_end", False):
+            return {}
+        from transformers import StoppingCriteria, StoppingCriteriaList
+
+        torch, tok = self.torch, self.tok
+
+        class CodeEnd(StoppingCriteria):
+            def __call__(self, input_ids, scores, **kw):
+                done = []
+                for row in input_ids:
+                    gen = row[prompt_len:]
+                    done.append(len(gen) >= 2 and "```\n" in tok.decode(gen[-6:], skip_special_tokens=True))
+                return torch.tensor(done, dtype=torch.bool, device=input_ids.device)
+
+        return {"stopping_criteria": StoppingCriteriaList([CodeEnd()])}
 
     def _gen(self, prompts: list[str], mx: int, max_len: int) -> list[str]:
         if self.prefill_chunk > 0:
@@ -125,7 +163,7 @@ class HFBackend(LLMBackend):
                        truncation=True, max_length=max_len).to(self.model.device)
         with torch.no_grad():
             gen = self.model.generate(**enc, max_new_tokens=mx, do_sample=False, temperature=None, top_p=None, top_k=None,
-                                      pad_token_id=self.tok.pad_token_id)
+                                      pad_token_id=self.tok.pad_token_id, **self._stop_kw(enc["input_ids"].shape[1]))
         res = [self.tok.decode(row, skip_special_tokens=True) for row in gen[:, enc["input_ids"].shape[1]:]]
         del enc, gen
         return res
@@ -173,7 +211,8 @@ class HFBackend(LLMBackend):
                 except TypeError:
                     self.model(**kw)
             gen = self.model.generate(input_ids=ids, attention_mask=torch.ones_like(ids), past_key_values=cache, max_new_tokens=mx,
-                                      do_sample=False, temperature=None, top_p=None, top_k=None, pad_token_id=self.tok.pad_token_id)
+                                      do_sample=False, temperature=None, top_p=None, top_k=None, pad_token_id=self.tok.pad_token_id,
+                                      **self._stop_kw(n))
         out = self.tok.decode(gen[0, n:], skip_special_tokens=True)
         if self.prefix_cache:
             self._pc, self._pc_ids = cache, seq[: n - 1]
@@ -207,6 +246,8 @@ class VLLMBackend(LLMBackend):
               "gpu_memory_utilization": float(cfg.get("gpu_memory_utilization", 0.88)),
               "max_model_len": int(cfg.get("max_model_len", 16384)),
               "enforce_eager": bool(cfg.get("enforce_eager", False)), "enable_prefix_caching": True}
+        if cfg.get("max_num_seqs"):
+            kw["max_num_seqs"] = int(cfg["max_num_seqs"])
         if cfg.get("quantization"):
             kw["quantization"] = cfg["quantization"]
         self.llm = LLM(**kw)
@@ -222,7 +263,8 @@ class VLLMBackend(LLMBackend):
         return len(self.tok(self._prompt(messages), add_special_tokens=False)["input_ids"])
 
     def generate_batch(self, batch, max_new_tokens=None):
-        sp = self.SamplingParams(temperature=0.0, max_tokens=int(max_new_tokens or self.max_new), seed=0)
+        sp = self.SamplingParams(temperature=0.0, max_tokens=int(max_new_tokens or self.max_new), seed=0,
+                                 stop=["```\n"], include_stop_str_in_output=True)   # one python block, then stop (see HFBackend._stop_kw)
         outs = self.llm.generate([self._prompt(m) for m in batch], sp, use_tqdm=False)
         return [o.outputs[0].text for o in outs]
 

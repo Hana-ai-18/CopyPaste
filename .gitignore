@@ -11,6 +11,7 @@ demo_split/
 
 # exemplar bank = train questions + code: do not publish (rebuild it with scripts/build_exemplars.py)
 exemplars/*.jsonl
+!exemplars/seed_exemplars.jsonl
 
 # models and outputs
 models/*

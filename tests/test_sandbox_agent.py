@@ -183,3 +183,45 @@ def test_prompt_contains_rulebook_profile_and_question(loaded):
     sys_p, user = seen["m"][0]["content"], seen["m"][1]["content"]
     assert "declare_unanswerable" in sys_p and "rank_top" in sys_p and "last_week" in sys_p
     assert "RULEBOOK-MARKER" in user and "order_items" in user and "Question: doanh thu hôm nay?" in user and AS_OF in user
+
+
+def test_empty_result_gets_one_extra_repair_round(loaded):
+    sb, info = loaded
+    calls = {"empty_prompt": 0}
+
+    def resp(msgs):
+        if "empty or zero" in msgs[-1]["content"]:
+            calls["empty_prompt"] += 1
+            return _fence("answer_type='number'\nanswer=9")
+        return _fence("answer_type='number'\nanswer=0")
+
+    ag = _agent(sb, resp, max_repairs=1)
+    r = ag.answer(BusinessContext("b", info), "", "q", AS_OF)
+    assert calls["empty_prompt"] >= 1 and r.record["answer"] == 9 and r.decision == "answer"
+
+
+def test_empty_result_kept_when_retry_fails(loaded):
+    sb, info = loaded
+
+    def resp(msgs):
+        if "empty or zero" in msgs[-1]["content"]:
+            return _fence("answer = orders['zzz']")                 # broken retry
+        return _fence("answer_type='number'\nanswer=0")
+
+    ag = _agent(sb, resp, max_repairs=1)
+    r = ag.answer(BusinessContext("b", info), "", "q", AS_OF)
+    assert r.record["answer"] == 0 and r.decision == "answer"
+
+
+def test_no_empty_round_in_fast_mode(loaded):
+    sb, info = loaded
+    n = {"c": 0}
+
+    def resp(msgs):
+        n["c"] += 1
+        return _fence("answer_type='number'\nanswer=0")
+
+    ag = _agent(sb, resp)
+    ag.fast_mode = True
+    ag.answer(BusinessContext("b", info), "", "q", AS_OF)
+    assert n["c"] == 3

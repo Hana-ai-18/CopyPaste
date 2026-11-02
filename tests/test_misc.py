@@ -121,7 +121,7 @@ def test_hf_backend_flow_with_stubs(monkeypatch):
 
     from datamate.llm import HFBackend
 
-    b = HFBackend("some/path", {"load_in_4bit": True, "dtype": "float16", "batch_size": 2, "prefill_chunk": 0, "chat_template_kwargs": {"enable_thinking": False}},
+    b = HFBackend("some/path", {"load_in_4bit": True, "dtype": "float16", "batch_size": 2, "prefill_chunk": 0, "stop_at_code_end": False, "chat_template_kwargs": {"enable_thinking": False}},
                   {"max_new_tokens": 33}, seed=1)
     assert b.generate([{"role": "user", "content": "xx"}]) == "Hi"
     assert b.generate_batch([[{"role": "user", "content": "a"}], [{"role": "user", "content": "bbb"}], [{"role": "user", "content": "c"}]]) == ["Hi"] * 3
@@ -184,7 +184,7 @@ def test_hf_backend_retries_after_cuda_oom(monkeypatch):
     monkeypatch.setitem(sys.modules, "transformers", tf)
     from datamate.llm import HFBackend
 
-    b = HFBackend("p", {"load_in_4bit": True, "dtype": "float16", "batch_size": 2, "prefill_chunk": 0, "max_input_tokens": 1000}, {"max_new_tokens": 5})
+    b = HFBackend("p", {"load_in_4bit": True, "dtype": "float16", "batch_size": 2, "prefill_chunk": 0, "stop_at_code_end": False, "max_input_tokens": 1000}, {"max_new_tokens": 5})
     assert Model.kw["device_map"] == {"": 0} and Model.kw["low_cpu_mem_usage"] is True      # whole model on the one visible GPU, streamed load
     assert b.generate_batch([[{"role": "user", "content": "a"}], [{"role": "user", "content": "b"}]]) == ["Hi", "Hi"]
     assert freed and (1, 750) in seen                                                       # cache freed, retried one by one with a 25 % shorter context
@@ -296,3 +296,62 @@ def test_calibrate_moves_thresholds_only_for_a_clear_gain(tmp_path):
     log, gold = _calib_files(tmp_path, rows)
     out = calibrate(log, gold)
     assert out["threshold_answer"] > 0.6
+
+
+def test_oom_halves_the_prefill_chunk_before_cutting_context():
+    from datamate.llm import HFBackend
+
+    class T:
+        def empty_cache(self): pass
+
+    b = HFBackend.__new__(HFBackend)
+    b.torch = type("X", (), {"cuda": T()})()
+    b.batch_size, b.max_in, b.max_new, b.prefill_chunk, b._pc, b._pc_ids = 1, 12000, 10, 2048, None, []
+    b._prompt = lambda m: m
+    calls = []
+
+    def fake_gen(prompts, mx, max_len):
+        calls.append((b.prefill_chunk, max_len))
+        if b.prefill_chunk > 512:
+            raise RuntimeError("CUDA out of memory. Tried to allocate 2 GiB")
+        return ["ok"]
+
+    b._gen = fake_gen
+    assert b.generate_batch(["p"]) == ["ok"]
+    assert calls[-1] == (512, 12000) and b.prefill_chunk == 512      # chunk halved 2048 -> 1024 -> 512, context untouched
+
+
+def test_generation_stops_when_the_code_block_closes():
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("transformers")
+    from datamate.llm import HFBackend
+
+    class Tok:
+        def decode(self, ids, skip_special_tokens=True): return "".join(chr(int(i)) for i in ids)
+
+    b = HFBackend.__new__(HFBackend)
+    b.torch, b.tok, b.stop_code_end = torch, Tok(), True
+    prompt = "```\nprompt text with a fence```\n"
+    plen = len(prompt)
+    crit = b._stop_kw(plen)["stopping_criteria"][0]
+    enc = lambda t: torch.tensor([[ord(c) for c in prompt + t]])
+    assert not bool(crit(enc(""), None)[0])                      # fences inside the PROMPT never stop generation
+    assert not bool(crit(enc("```python\nx = 1\n"), None)[0])     # an OPENING fence does not stop it
+    assert not bool(crit(enc("```python\nx = 1\n``"), None)[0])
+    assert bool(crit(enc("```python\nx = 1\n```\n"), None)[0])    # the closing fence does
+    b.stop_code_end = False
+    assert b._stop_kw(plen) == {}
+
+
+def test_all_configs_load_and_vllm_keys_are_known():
+    import glob
+    from datamate.config import load_config
+    for f in sorted(glob.glob("configs/*.json")):
+        if f.endswith("model.json"):
+            continue
+        cfg = load_config(f)
+        assert cfg["backend"] in ("hf", "vllm", "mock"), f
+        if cfg["backend"] == "vllm":
+            known = {"dtype", "quantization", "tensor_parallel_size", "gpu_memory_utilization", "max_model_len", "enforce_eager", "chat_template_kwargs", "max_num_seqs"}
+            assert set(cfg["vllm"]) <= known, (f, set(cfg["vllm"]) - known)
+            assert cfg["vllm"]["max_model_len"] > cfg["generation"]["max_new_tokens"] + 5000, f

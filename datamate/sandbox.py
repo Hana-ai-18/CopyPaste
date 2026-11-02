@@ -33,6 +33,42 @@ RESERVED_NAMES = {"pd", "np", "dfs", "rulebook", "calendar_df", "readme", "as_of
 MAX_STDOUT = 3000
 
 
+
+def patch_pandas_date_compare() -> bool:
+    """LLM code constantly writes `df['date'] == dt.date(...)` / `df['date'] >= as_of`. In pandas a datetime64 column compared with a
+    plain `datetime.date` is silently all-False for ==, and raises TypeError for < <= > >= : the real log showed 'hôm qua / hôm nay'
+    questions answered 0 by every vote. Make such comparisons mean what the author meant - the DAY: == / != compare the date part,
+    >= / < compare against midnight, > / <= against the end of the day. Applied only inside the sandbox worker (never to our own code)."""
+    try:
+        import operator
+
+        import pandas as pd
+        from pandas.core.arrays import DatetimeArray
+        from pandas.core.arrays import datetimelike as m
+
+        cls = m.DatetimeLikeArrayMixin
+        if getattr(cls, "_zaic_patched", False):
+            return True
+        orig = cls._cmp_method
+
+        def _cmp_method(self, other, op):
+            if type(other) is dt.date and isinstance(self, DatetimeArray) and getattr(self, "tz", None) is None:
+                ts = pd.Timestamp(other)
+                if op in (operator.eq, operator.ne):
+                    return orig(self.normalize(), ts, op)
+                if op is operator.gt:
+                    return orig(self, ts + pd.Timedelta(days=1), operator.ge)
+                if op is operator.le:
+                    return orig(self, ts + pd.Timedelta(days=1), operator.lt)
+                return orig(self, ts, op)
+            return orig(self, other, op)
+
+        cls._cmp_method = _cmp_method
+        cls._zaic_patched = True
+        return True
+    except Exception:  # noqa: BLE001 - a pandas internals change must never break the run
+        return False
+
 # --------------------------------------------------------------------------- results
 @dataclass
 class ExecResult:
@@ -162,6 +198,8 @@ def _exec_child(base_ns, lunar, code, as_of_iso, w):
 def _worker_main(conn):
     import pandas as pd
     import numpy as np
+
+    patch_pandas_date_compare()
 
     from .data_loader import load_business, read_csv_robust
     from .helpers import LunarCalendar

@@ -356,22 +356,22 @@ def main() -> None:
 
     A: list = []
     ok5 = lambda k: [SOL[k]] * 5
-    add("biz_demo1", "sp bán dc nhiều nhất tuần rồi là gì", "string", g1["best_last_week"][0], g1["best_last_week"][1],
+    add("biz_demo1", "tuần rồi sp nào bán đc nhìu nhất z", "string", g1["best_last_week"][0], g1["best_last_week"][1],
         variants=[BROKEN_KEY] + [SOL["best_last_week"]] * 4, repair=SOL["best_last_week"])           # exercises repair
-    add("biz_demo1", "tháng này doanh thu bao nhiêu", "number", g1["rev_mtd"], variants=ok5("rev_mtd"))
-    add("biz_demo1", "doanh thu tháng 2 so với tháng 1 tăng giảm bao nhiêu phần trăm", "percent", g1["pct_feb_vs_jan"],
+    add("biz_demo1", "tháng này doanh thu đc bao nhiêu rồi", "number", g1["rev_mtd"], variants=ok5("rev_mtd"))
+    add("biz_demo1", "dthu tháng 2 so vs tháng 1 tăng giảm bao nhiêu % z", "percent", g1["pct_feb_vs_jan"],
         variants=[SOL["pct"], WRONG_PCT, SOL["pct"], SOL["pct"], SOL["pct"]])                        # exercises voting
-    add("biz_demo1", "top 3 mặt hàng doanh thu cao nhất tháng trước", "list", g1["top3_rev_feb"], variants=ok5("top3"))
-    add("biz_demo1", "tháng trước ngày nào bán được nhiều tiền nhất", "date", g1["best_day_feb"], variants=ok5("best_day"))
-    add("biz_demo1", "tuần rồi doanh thu có cao hơn tuần trước đó không", "boolean", g1["lastweek_gt_prevweek"], variants=ok5("week_cmp"))
-    add("biz_demo1", "còn ai nợ tiền chưa trả", "table", g1["debt_table"], variants=ok5("debt"))
-    add("biz_demo1", "lợi nhuận tháng trước là bao nhiêu", "unanswerable", None, variants=ok5("profit"))
+    add("biz_demo1", "cho hỏi top 3 mặt hàng có doanh thu cao nhất tháng trước", "list", g1["top3_rev_feb"], variants=ok5("top3"))
+    add("biz_demo1", "tháng trước ngày nào cửa hàng bán được nhìu tiền nhất", "date", g1["best_day_feb"], variants=ok5("best_day"))
+    add("biz_demo1", "doanh thu tuần rồi có cao hơn tuần trước đó hông", "boolean", g1["lastweek_gt_prevweek"], variants=ok5("week_cmp"))
+    add("biz_demo1", "xem giúp ai còn nợ tiền chưa trả và số nợ của từng người", "table", g1["debt_table"], variants=ok5("debt"))
+    add("biz_demo1", "lợi nhuận tháng trước của tiệm là bao nhiêu nhỉ", "unanswerable", None, variants=ok5("profit"))
     scattered = [D(f"answer_type = 'number'\nanswer = {g1['rev_yesterday'] + k * 1000}") for k in range(5)]
-    add("biz_demo1", "hôm qua cả tiệm thu về bao nhiêu", "number", g1["rev_yesterday"], variants=scattered)  # no agreement -> abstain
-    add("biz_demo2", "tuần này bán được bao nhiêu ly", "number", g2["cups_week"], variants=ok5("cups_week"))
-    add("biz_demo2", "món nào bán chạy nhất tháng này", "string", g2["best_item_month"][0], g2["best_item_month"][1], variants=ok5("best_item"))
-    add("biz_demo3", "kho còn bao nhiêu loại thuốc đã hết hạn", "number", g3["n_expired"], variants=ok5("n_expired"))
-    add("biz_demo3", "thuốc nào sắp hết hạn trong 30 ngày tới", "list", g3["soon"], variants=ok5("soon"))
+    add("biz_demo1", "bữa qua cả tiệm thu về bn tiền", "number", g1["rev_yesterday"], variants=scattered)  # no agreement -> abstain
+    add("biz_demo2", "tuần này bán đc tổng cộng bao nhiêu ly", "number", g2["cups_week"], variants=ok5("cups_week"))
+    add("biz_demo2", "tháng này món nào bán chạy nhất vậy", "string", g2["best_item_month"][0], g2["best_item_month"][1], variants=ok5("best_item"))
+    add("biz_demo3", "trong kho có mấy loại thuốc đã hết hạn rồi", "number", g3["n_expired"], variants=ok5("n_expired"))
+    add("biz_demo3", "30 ngày tới thuốc nào sắp hết hạn", "list", g3["soon"], variants=ok5("soon"))
 
     with open(out / "questions.jsonl", "w", encoding="utf-8") as f:
         for q in Q:

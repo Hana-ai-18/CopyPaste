@@ -8,12 +8,28 @@ from dataclasses import dataclass, field
 
 from .answer_format import answer_key, make_record
 from .llm import LLMBackend
-from .prompts import build_messages, build_repair_messages
+from .prompts import build_empty_repair_messages, build_messages, build_repair_messages
 from .retrieval import ExemplarBank
 from .sandbox import ExecResult, LoadInfo, SandboxClient
 
 _THINK = re.compile(r"<think>.*?</think>", re.S)
 _FENCE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.S | re.I)
+
+
+def empty_reason(atype: str | None, answer) -> str | None:
+    """Describe why an executed answer looks like a wiped-out filter (0 / empty list / empty table), else None."""
+    try:
+        if atype in ("number", "percent") and float(answer) == 0:
+            return "the answer is 0"
+        if atype == "list" and len(answer) == 0:
+            return "the list is empty"
+        if atype == "table" and len(answer.get("rows", [])) == 0:
+            return "the table has no rows"
+        if atype == "string" and not str(answer).strip():
+            return "the string is empty"
+    except Exception:
+        return None
+    return None
 
 
 def extract_code(text: str) -> str | None:
@@ -130,7 +146,32 @@ class DataMateAgent:
                 if new_code:
                     c.code = new_code
                     self._execute(c, as_of, self._exec_timeout(t0, limit))
+        if max_repairs > 0 and time.time() - t0 <= limit:
+            self._empty_round(cands, as_of, t0, limit)
         return cands
+
+    def _empty_round(self, cands: list[Candidate], as_of: str, t0: float, limit: float) -> None:
+        """One extra round for candidates that ran fine but returned 0 / empty: usually a wrong filter. Keep the old result unless the retry is valid."""
+        todo = []
+        for c in cands:
+            if c.result is not None and c.result.ok and c.code:
+                why = empty_reason(c.result.answer_type, c.result.answer)
+                if why:
+                    todo.append((c, why))
+        if not todo:
+            return
+        rep = [build_empty_repair_messages(c.messages, c.code, why, c.result.stdout) for c, why in todo]
+        fixed = self.llm.generate_batch(rep)
+        for (c, _), m, t in zip(todo, rep, fixed):
+            new_code = extract_code(t)
+            if not new_code:
+                continue
+            old = (c.code, c.result, c.key, c.messages)
+            c.code, c.messages = new_code, m
+            self._execute(c, as_of, self._exec_timeout(t0, limit))
+            c.repairs += 1
+            if not (c.result and c.result.ok and c.key):
+                c.code, c.result, c.key, c.messages = old
 
     def _exec_timeout(self, t0: float, limit: float) -> float:
         """Per-run timeout: the configured value, shrunk when the question's time budget is nearly used up."""

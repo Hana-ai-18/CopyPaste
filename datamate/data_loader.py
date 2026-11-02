@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import re
+import unicodedata
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,6 +15,7 @@ from .textutil import strip_accents
 CSV_EXT = {".csv", ".tsv", ".txt"}
 XLS_EXT = {".xlsx", ".xlsm", ".xls"}
 DB_EXT = {".sqlite", ".sqlite3", ".db"}
+JSON_EXT = {".json", ".jsonl", ".ndjson", ".parquet"}
 
 
 @dataclass
@@ -135,6 +137,26 @@ def _read_excel(path: Path, warnings: list[str]) -> dict[str, pd.DataFrame]:
     return out
 
 
+def _read_json(path: Path) -> dict[str, pd.DataFrame]:
+    """Unseen shops might export JSON / JSON-lines / parquet: a list of records, or a dict of {table: records}."""
+    ext = path.suffix.lower()
+    if ext == ".parquet":
+        return {path.stem: pd.read_parquet(path)}
+    if ext in (".jsonl", ".ndjson"):
+        return {path.stem: pd.read_json(path, lines=True)}
+    import json as _json
+
+    obj = _json.loads(path.read_text(encoding="utf-8-sig", errors="replace"))
+    if isinstance(obj, dict) and obj and all(isinstance(v, list) for v in obj.values()):
+        return {k: pd.json_normalize(v) for k, v in obj.items() if v}
+    if isinstance(obj, dict):                       # {"data": [...]} or a single record
+        for v in obj.values():
+            if isinstance(v, list) and v and isinstance(v[0], dict):
+                return {path.stem: pd.json_normalize(v)}
+        return {path.stem: pd.json_normalize(obj)}
+    return {path.stem: pd.json_normalize(obj)}
+
+
 def _read_sqlite(path: Path) -> dict[str, pd.DataFrame]:
     out: dict[str, pd.DataFrame] = {}
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
@@ -200,6 +222,34 @@ def merge_same_schema(biz: BusinessData, min_tables: int = 2) -> None:
 _SUMMARY = re.compile(r"^(tong cong|tong|cong|total|grand total|tong ket)\s*:?$|^ghi chu\s*:|^luu y\s*:")
 
 
+_ERR_TOKENS = {"#n/a", "#div/0!", "#ref!", "#value!", "#name?", "#num!", "#null!", "#n/a!"}
+_WSRE = re.compile(r"[\s\u00a0\u200b\u200c\u200d\ufeff]+")
+
+
+def _clean_text(v: str) -> str | None:
+    t = _WSRE.sub(" ", unicodedata.normalize("NFC", v)).strip()
+    return None if t.lower() in _ERR_TOKENS else t
+
+
+def clean_text_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Unseen exports differ in invisible ways: decomposed (NFD) Vietnamese accents, non-breaking / zero-width spaces, trailing blanks
+    ('Cà phê ' vs 'Cà phê' split a groupby), Excel error cells (#N/A, #DIV/0!). Normalise column names and every text cell (once per DISTINCT value)."""
+    df = df.copy()
+    df.columns = [_WSRE.sub(" ", unicodedata.normalize("NFC", str(c))).strip() for c in df.columns]
+    for c in df.columns:
+        col = df[c]
+        if col.dtype != object and not pd.api.types.is_string_dtype(col):
+            continue
+        uniq = [u for u in col.dropna().unique() if isinstance(u, str)]
+        if not uniq:
+            continue
+        mp = {u: _clean_text(u) for u in uniq}
+        if all(k == v for k, v in mp.items()):
+            continue
+        df[c] = col.map(lambda x, mp=mp: mp.get(x, x) if isinstance(x, str) else x)
+    return df
+
+
 def drop_summary_rows(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     """Hand-kept books contain 'Tổng cộng' rows (monthly totals), footnotes ('Ghi chú: ...') and repeated header rows inside the
     data. They are not records: summing over them double counts. Returns (clean df, number of rows dropped)."""
@@ -261,6 +311,9 @@ def load_business(directory: str | Path, business_id: str | None = None) -> Busi
             elif ext in XLS_EXT:
                 for sname, df in _read_excel(p, biz.warnings).items():
                     pending.append((p.stem, sname, df))
+            elif ext in JSON_EXT:
+                for tname, df in _read_json(p).items():
+                    pending.append((p.stem, tname, df))
             elif ext in DB_EXT:
                 for tname, df in _read_sqlite(p).items():
                     pending.append((p.stem, tname, df))
@@ -274,6 +327,10 @@ def load_business(directory: str | Path, business_id: str | None = None) -> Busi
         if sub and not generic and name in taken:
             name = safe_identifier(f"{stem}_{sub}")
         name = _unique(name, taken)
+        try:
+            df = clean_text_frame(df)
+        except Exception:  # noqa: BLE001
+            pass
         try:
             df, n_dropped = drop_summary_rows(df)
         except Exception:  # noqa: BLE001

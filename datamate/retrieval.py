@@ -20,14 +20,16 @@ class ExemplarBank:
         self.idf = {w: math.log(1 + n / (1 + c)) for w, c in df.items()}
 
     @classmethod
-    def load(cls, path: str | Path | None) -> "ExemplarBank":
+    def load(cls, path: str | Path | None, extra: str | Path | None = None) -> "ExemplarBank":
+        """`path`: the bank built from TRAIN (may be absent). `extra`: hand-written seed examples (idioms of the helpers), always available."""
         items: list[dict] = []
-        if path and Path(path).exists():
-            with open(path, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        items.append(json.loads(line))
+        for p in (extra, path):
+            if p and str(p).lower() != "none" and Path(p).exists():
+                with open(p, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            items.append(json.loads(line))
         return cls(items)
 
     def __len__(self) -> int:

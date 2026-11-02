@@ -203,6 +203,15 @@ def to_num(s) -> pd.Series:
             return float(v)
         if len(_re.findall(r"\d[\d.,]*", str(v))) != 1:       # none, or several numbers ('1 bao 25kg') -> not a plain number
             return float("nan")
+        mult = 1.0
+        tail = strip_accents(str(v)).lower().strip()
+        if _re.search(r"\d\s*(k|nghin|ngan)$", tail):          # '50k', '120 nghìn'
+            mult = 1e3
+        elif _re.search(r"\d\s*(tr|trieu)$", tail):            # '1,5tr', '2 triệu'
+            mult = 1e6
+        if mult != 1.0:
+            r = one(_re.sub(r"[^0-9,.]", "", tail))
+            return r * mult
         t = _re.sub(r"[^0-9,.\-]", "", str(v))
         neg = t.startswith("-")
         t = t.replace("-", "")
@@ -254,6 +263,28 @@ def norm_status(s) -> pd.Series:
         return "khac"
 
     return (s if isinstance(s, pd.Series) else pd.Series(s)).map(one)
+
+
+_ANON_EXACT = {"", "nan", "none", "null", "na", "n/a", "kl", "k.l", "le", "khach", "khach le", "khach hang le", "khach vang lai", "vang lai", "kh le", "kh vl",
+               "khach ko ten", "khach khong ten", "khong ten", "ko ten", "khach moi", "khach khong luu", "khong luu", "ban le", "walk in", "walkin", "guest",
+               "unknown", "?", "-", "--"}
+_ANON_PART = re.compile(r"khach (le|vang lai|khong luu|ko luu|khong ten|ko ten)|^khong (luu|ten)\b|\bvang lai\b")
+
+
+def anon_customer(s) -> pd.Series:
+    """Boolean mask: the customer cell is NOT a real customer (blank/NaN or a placeholder: 'Khách lẻ', 'khách lẻ', 'kl', 'lẻ', 'khách vãng lai',
+    'khách (không lưu)' ...). Rank / count customers with df[~anon_customer(df[col])]; keep them when the question is about all sales."""
+
+    def one(v):
+        if v is None or (isinstance(v, float) and v != v):
+            return True
+        raw = str(v).lower().strip()
+        if raw == "lê":                      # the surname Lê is a real customer name (accent-stripped it would collide with 'lẻ' = retail)
+            return False
+        t = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", strip_accents(raw))).strip()
+        return t in _ANON_EXACT or bool(_ANON_PART.search(t))
+
+    return (s if isinstance(s, pd.Series) else pd.Series(s)).map(one).astype(bool)
 
 
 def rows_in_period(dates, start, end) -> int:
@@ -417,7 +448,7 @@ def build_helpers(as_of: dt.date, lunar: LunarCalendar | None) -> dict[str, Call
         "last_quarter": last_quarter, "this_quarter_to_date": this_quarter_to_date,
         "year_range": year_range, "this_year_to_date": this_year_to_date, "last_year": last_year,
         "last_n_days": last_n_days, "same_period_last_year": same_period_last_year, "shift_years": shift_years,
-        "days_in": days_in, "parse_dates": parse_dates, "to_num": to_num, "rows_in_period": rows_in_period, "norm_status": norm_status, "data_span": data_span, "between": between, "rank_top": rank_top,
+        "days_in": days_in, "parse_dates": parse_dates, "to_num": to_num, "rows_in_period": rows_in_period, "norm_status": norm_status, "anon_customer": anon_customer, "data_span": data_span, "between": between, "rank_top": rank_top,
         "contains_vi": contains_vi, "fuzzy_find": fuzzy_find, "vi_key": vi_key, "strip_accents": strip_accents,
         "tet_window": tet_window, "tet_date": tet_date, "lunar_of": lunar_of,
     }

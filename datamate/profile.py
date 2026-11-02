@@ -6,6 +6,7 @@ import re
 import pandas as pd
 
 from .helpers import parse_dates
+from .hints import structure_hints
 
 _ISO = re.compile(r"^\d{4}-\d{2}-\d{2}")
 _DMY = re.compile(r"^\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}")
@@ -89,14 +90,38 @@ def _join_hints(tables: dict[str, pd.DataFrame]) -> str:
     return "\n".join(hints[:25])
 
 
+def _names_only(tables: dict[str, pd.DataFrame], per_col: int = 28) -> str:
+    """Last resort for very wide schemas: EVERY table is still listed (a dropped table can hold the answer), columns by name only."""
+    out = []
+    for n, df in tables.items():
+        cols = ", ".join(_short(c, per_col) for c in df.columns)
+        out.append(f"### {n} ({len(df)} rows): {cols}")
+    return "\n".join(out)
+
+
 def profile_tables(tables: dict[str, pd.DataFrame], max_chars: int = 7000, sample_rows: int = 3) -> str:
-    """Return a compact text profile that fits in `max_chars` (detail is reduced progressively)."""
+    """Return a compact text profile that fits in `max_chars` (detail is reduced progressively).
+    The data-derived structure hints go FIRST so tail truncation never drops them."""
+    try:
+        head = structure_hints(tables, max_chars=max(900, int(0.4 * max_chars)))
+    except Exception:
+        head = ""
+    budget = max_chars - (len(head) + 2 if head else 0)
     for detail, rows in ((2, sample_rows), (1, 0), (0, 0)):
         blocks = [_table_block(n, df, detail, rows) for n, df in tables.items()]
         text = "\n\n".join(blocks)
         hints = _join_hints(tables)
         if hints:
             text += "\n\nPossible join keys (same column name in several tables):\n" + hints
-        if len(text) <= max_chars:
-            return text
-    return text[: max_chars - 40] + "\n… [profile truncated]"
+        if len(text) <= budget:
+            break
+    else:
+        text = _names_only(tables)
+        if len(text) > budget:
+            text = _names_only(tables, per_col=16)
+        if len(text) > budget:                       # give each table an equal share so none disappears
+            share = max(60, budget // max(len(tables), 1) - 1)
+            text = "\n".join(l if len(l) <= share else l[: share - 1] + "…" for l in text.splitlines())
+        if len(text) > budget:
+            text = text[: budget - 40] + "\n… [profile truncated]"
+    return (head + "\n\n" + text) if head else text

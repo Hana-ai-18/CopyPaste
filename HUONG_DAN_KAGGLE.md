@@ -122,3 +122,14 @@ Mình đã chạy `predict.sh` đúng như container sẽ chạy (môi trường
 - **Ngưỡng abstain chỉ đổi khi chắc chắn.** `evaluate --calibrate` giờ chỉ đề xuất ngưỡng khác mặc định (0,6 / 0,8) khi có ≥ 100 câu và hơn mặc định ≥ 0,02 PA; còn lại giữ mặc định.
 - **Bank ví dụ không để một shop chi phối.** `build_exemplars.py` giới hạn 25 ví dụ mỗi shop (`--max_per_business`).
 - **Không dùng dữ liệu test** để huấn luyện, dựng ví dụ hay gán nhãn (script từ chối đường dẫn có `public_test`/`private_test`).
+
+## 11. Chạy nhanh hơn trên T4: vLLM + AWQ (thử nghiệm)
+
+Log thật cho thấy backend transformers + 4-bit trên T4 bị nghẽn ở bước **sinh chữ** (14B: ~527 giây/câu; 1.000 câu không kịp). vLLM gom 3–5 lời giải của một câu thành một lô và tái dùng phần đầu prompt, thường nhanh hơn nhiều lần.
+
+```python
+MODEL_ID = "Qwen/Qwen3-8B-AWQ"      # hoặc "Qwen/Qwen3-14B-AWQ"
+# CONFIG tự đổi sang configs/t4_vllm.json (8B) / configs/t4_vllm_14b.json (14B); notebook tự pip install vllm
+```
+Nếu cài/chạy vLLM lỗi trên Kaggle, notebook dừng và nhắc quay lại `Qwen/Qwen3-8B` + `configs/t4_kaggle.json`.
+Lưu ý: bản AWQ chỉ dùng để chạy thử trên Kaggle; bài nộp chính thức dùng trọng số gốc `Qwen/Qwen3-14B` (bf16) trên 2×RTX 5090.

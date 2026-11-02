@@ -118,6 +118,11 @@ sys.path.insert(0, str(REPO))
 _missing = [f for f in ("scripts/download_model.py", "scripts/merge_shards.py", "datamate/run.py", "configs/t4_kaggle.json") if not (REPO / f).exists()]
 if _missing:
     raise FileNotFoundError(f"repo {REPO} is missing {_missing}: push the whole project (scripts/, configs/, datamate/ ...) to GitHub, then re-run this cell")
+# the GPU run only works with the chunked-prefill fix: refuse to start on an outdated repo (a GitHub push is needed after every update)
+_llm_src = (REPO / "datamate" / "llm.py").read_text(encoding="utf-8")
+if "prefill_chunk" not in _llm_src or "prefix_cache" not in _llm_src:
+    raise RuntimeError("The GitHub repo is OUTDATED (datamate/llm.py has no chunked prefill -> every question would hit CUDA out-of-memory on a T4). "
+                       "Unzip CopyPaste_update3.zip over the repo folder, then: git add -A && git commit -m update && git push, and run this notebook again.")
 from datamate.session import import_previous_outputs, remaining_budget_s
 for line in import_previous_outputs("/kaggle/input", WORK):       # continue a previous session (its output attached via Add Data -> Notebook Output)
     print("restored previous run:", line)
@@ -173,6 +178,15 @@ if NEEDS_GPU:
         best = max(cands, key=lambda p: shutil.disk_usage(p).free)
         mdir = best / "models" / "llm"
         print("free disk (GB):", {str(p): round(shutil.disk_usage(p).free / 1e9) for p in cands}, "-> model in", mdir)
+    if "awq" in MODEL_ID.lower():          # vLLM + AWQ 4-bit: batches the 3-5 variants of a question and caches the shared prompt (~5-10x faster than transformers on a T4)
+        CONFIG = "configs/t4_vllm_14b.json" if "14b" in MODEL_ID.lower() else "configs/t4_vllm.json"
+        print("MODEL_ID is an AWQ model -> CONFIG =", CONFIG)
+    if "vllm" in CONFIG:
+        run([sys.executable, "-m", "pip", "install", "-q", "vllm"], check=False)
+        _v = subprocess.run([sys.executable, "-c", "import vllm; print(vllm.__version__)"], capture_output=True, text=True)
+        if _v.returncode != 0:
+            raise RuntimeError("vLLM cannot be imported here:\\n" + _v.stderr[-1500:] + "\\nUse MODEL_ID='Qwen/Qwen3-8B' with CONFIG='configs/t4_kaggle.json' (transformers backend, slower).")
+        print("vllm", _v.stdout.strip())
     if "14b" in MODEL_ID.lower() and CONFIG.endswith("t4_kaggle.json"):
         CONFIG = "configs/t4_kaggle_14b.json"
         print("MODEL_ID is 14B -> CONFIG switched to", CONFIG)
