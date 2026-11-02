@@ -309,6 +309,8 @@ class FileMockBackend(MockBackend):
         ent = self.table.get(qs[-1].strip() if qs else "")
         if ent is None:
             return "```python\ndeclare_unanswerable('no mock response')\n```"
+        if len(messages) > 2 and messages[-1]["content"].startswith("Your code ran and gave an answer, but a self-check"):
+            return messages[-2]["content"]               # audit turn: the canned code is deliberately kept as it is
         if len(messages) > 2:  # repair turn
             return "```python\n" + ent.get("repair", ent["variants"][0]) + "\n```"
         idx = int(v.group(1)) if v else 0

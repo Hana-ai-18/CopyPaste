@@ -224,12 +224,14 @@ def main(argv: list[str] | None = None) -> int:
                 unfinished.add(q["id"])
                 remaining -= 1
                 continue
-            agent.fast_mode = (budget - elapsed_total) / max(remaining, 1) < float(cfg["agent"]["min_time_per_question_s"])
+            allow = (budget - elapsed_total) / max(remaining, 1)
+            agent.fast_mode = allow < float(cfg["agent"]["min_time_per_question_s"])
+            agent.pace_s = max(float(cfg["agent"]["min_time_per_question_s"]), 1.6 * allow)       # pace: one slow question cannot eat the budget of the rest
             try:
                 res = agent.answer(ctx, rb_biz, q["question"], q["as_of_date"])
                 rec = to_submission(q["id"], res.record)
                 extra = {"decision": res.decision, "confidence": round(res.confidence, 3), "n_run": res.n_run, "votes": res.votes,
-                         "top_candidate": res.top_record, "elapsed_s": round(time.time() - tq, 2), "fast_mode": agent.fast_mode,
+                         "top_candidate": res.top_record, "elapsed_s": round(time.time() - tq, 2), "fast_mode": agent.fast_mode, "ref": getattr(res, "ref", None),
                          "candidates": [_cand_log(c) for c in res.candidates]}
             except Exception:  # noqa: BLE001 - one bad question must never kill the run
                 rec = {"id": q["id"], "type": "abstain"}

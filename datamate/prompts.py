@@ -29,7 +29,7 @@ Otherwise answer. A value of 0 from existing data is a valid answer; "no rows be
 
 DATA HYGIENE (the books are hand-made and messy)
 - Placeholders for anonymous customers come in many spellings ('Khách lẻ', 'khách lẻ', 'kl', 'lẻ', '', NaN). Questions about "top khách / khách chi nhiều nhất / bao nhiêu khách" are about REAL customers: filter with `df[~anon_customer(df[col])]` first (the real log showed 'kl' and 'Khách lẻ' ranked as the top customers).
-- Columns that describe the ORDER (order total, discount, shipping fee, status, customer) are repeated on every line of the order: take them once per order (`drop_duplicates(order_id)`), never sum them over the lines. Amounts of a LINE (quantity x price, line total) are summed over lines. Check README/profile for which kind a column is.
+- Columns that describe the ORDER (order total, discount, shipping fee, status, customer) are repeated on every line of the order: take them once per order, never sum them over the lines. Amounts of a LINE (quantity x price, line total / 'thành tiền') are summed over ALL lines. NEVER `drop_duplicates(order_id)` and then sum a column: that keeps one line per order and silently under-counts (the real log lost 56% of the revenue this way, three times in a row). For money per order use `order_amounts(rows, order_col, amount_col)` (it detects order total vs line amount from the data); filter the rows by period/status first. Check the 'Detected structure' block for which columns are ORDER-level and which are LINE-level.
 - NEVER hard-code status strings such as ['Đã hoàn thành', 'Đã hủy']: the same shop writes it many ways. Order status is spelled dozens of ways (xong / Đã hoàn thành / completed, hủy đơn / khách hủy / cancelled, trả lại / Đổi trả / returned, Đang giao dịch / shipping ...): use norm_status(col) and print(pd.crosstab(raw, norm)) once; handle 'khac' yourself. Status belongs to the ORDER (it may be repeated on each line or written only on the first line).
 - Numbers may be text ('38,000', '1.250.000đ'): use to_num(). Mixed date spellings: use parse_dates(). Names: compare with vi_key() when spellings differ (case, accents, spaces).
 - A table `quy_doi_readme` (if present) holds the unit conversions that the README lists; units without a row have factor 1.
@@ -72,7 +72,7 @@ Strategy variant: {variant}
 {hint}
 Question: {question}
 
-Before you answer, check: (1) the period follows from as_of and the rulebook (a question on hôm qua / hôm nay / tuần rồi needs a date filter); (2) statuses via norm_status, no hard-coded strings; (3) customers without anonymous placeholders (anon_customer); (4) order-level amounts counted once per order; (5) answer_type and format as specified.
+Before you answer, check: (1) the period follows from as_of and the rulebook (a question on hôm qua / hôm nay / tuần rồi needs a date filter); (2) statuses via norm_status, no hard-coded strings; (3) customers without anonymous placeholders (anon_customer); (4) money per order via order_amounts() or by summing LINE columns over all lines - never drop_duplicates(order_id) followed by a sum; (5) answer_type and format as specified.
 """
 
 REPAIR_TEMPLATE = """The previous code failed or did not produce a valid answer.
@@ -92,6 +92,22 @@ Printed output:
 {stdout}
 
 Before answering again, print the row count after EACH filter step (date range, status, customer/product match) and find the step that wipes out the rows. Typical culprits: a date column still stored as text (use parse_dates), a status spelled differently from your literal (use norm_status and print the crosstab), a name/product matched with exact equality or wrong accents (use contains_vi / fuzzy_find), a wrong table or sheet, the wrong 'today'. Fix that step. Keep the empty/zero result ONLY if the data truly has no such rows (then the printed counts should show it). Reply with the complete corrected ```python block."""
+
+
+AUDIT_TEMPLATE = """Your code ran and gave an answer, but a self-check found a likely mistake against the rulebook:
+{issues}
+
+Printed output:
+{stdout}
+
+Re-read the rule that applies to this question, fix the code, and reply with the complete corrected ```python block. If you are certain the flagged point does not apply to this question (for example the data really has no such statuses), keep the logic but add a one-line comment saying why."""
+
+
+def build_audit_messages(messages: list[dict], code: str, issues: list[str], stdout: str) -> list[dict]:
+    return messages + [
+        {"role": "assistant", "content": f"```python\n{code}\n```"},
+        {"role": "user", "content": AUDIT_TEMPLATE.format(issues="\n".join("- " + i for i in issues), stdout=_cut(stdout or "(none)", 1200))},
+    ]
 
 
 def build_system_prompt() -> str:

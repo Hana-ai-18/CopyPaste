@@ -79,6 +79,7 @@ class ExecResult:
     stdout: str = ""
     error: str | None = None
     elapsed: float = 0.0
+    lineage: list = field(default_factory=list)      # lossy drop_duplicates events seen while the code ran (see lineage.py)
 
 
 @dataclass
@@ -161,10 +162,24 @@ def _exec_child(base_ns, lunar, code, as_of_iso, w):
 
     res = {"ok": False, "answer_type": None, "answer": None, "reason": None, "stdout": "", "error": None}
     buf = io.StringIO()
+    lineage: list = []
+    try:
+        from .lineage import install, install_merge
+
+        install(lineage)
+        install_merge(lineage)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         as_of = dt.date.fromisoformat(as_of_iso)
         ns = dict(base_ns)
         ns.update(build_helpers(as_of, lunar))
+        try:
+            from .lineage import wrap_helpers
+
+            wrap_helpers(ns, lineage)
+        except Exception:  # noqa: BLE001
+            pass
         ns.update({"as_of": as_of, "AS_OF": as_of_iso, "dt": dt, "sql": _make_sql(base_ns["dfs"]),
                    "__builtins__": _make_safe_builtins(), "__name__": "__sandbox__"})
 
@@ -188,8 +203,24 @@ def _exec_child(base_ns, lunar, code, as_of_iso, w):
     except BaseException as e:  # noqa: BLE001 - we must report anything the snippet raises
         res["error"] = _format_error(e, code)
     res["stdout"] = buf.getvalue()[:MAX_STDOUT]
+    res["lineage"] = lineage[:6]
     try:
         w.send(json.dumps(res, ensure_ascii=False, default=str))
+    finally:
+        w.close()
+
+
+def _ref_child(dfs, question, as_of_iso, w):
+    """Independent second computation (refcalc.py) in a throw-away process: sends (type, value) or None."""
+    out = None
+    try:
+        from .refcalc import compute
+
+        out = compute(dfs, question, as_of_iso)
+    except BaseException:  # noqa: BLE001
+        out = None
+    try:
+        w.send(json.dumps(out, default=str))
     finally:
         w.close()
 
@@ -252,6 +283,26 @@ def _worker_main(conn):
                 info = {"profile": prof, "tables": {n: [len(df), [str(c) for c in df.columns]] for n, df in biz.tables.items()},
                         "readme": biz.readme, "warnings": biz.warnings, "lunar_ok": lunar is not None}
                 conn.send(("ok", info))
+            elif cmd == "ref":
+                _, question, as_of_iso, timeout = msg
+                if state["ns"] is None:
+                    conn.send(("ok", None))
+                    continue
+                r, w = fork.Pipe(duplex=False)
+                p = fork.Process(target=_ref_child, args=(state["ns"]["dfs"], question, as_of_iso, w))
+                p.start()
+                w.close()
+                out = None
+                if r.poll(timeout):
+                    try:
+                        out = json.loads(r.recv())
+                    except (EOFError, OSError, ValueError):
+                        out = None
+                if p.is_alive():
+                    p.kill()
+                p.join(5)
+                r.close()
+                conn.send(("ok", out))
             elif cmd == "run":
                 _, code, as_of_iso, timeout = msg
                 if state["ns"] is None:
@@ -339,6 +390,15 @@ class SandboxClient:
         d = self._call(("load", args), 600)
         return LoadInfo(**d)
 
+    def ref(self, question: str, as_of: str, timeout: float = 60.0):
+        """Independent answer from refcalc.py as (type, value), or None when the engine has no opinion / fails."""
+        try:
+            d = self._call(("ref", question, as_of, timeout), timeout + 30)
+        except (SandboxError, EOFError, OSError, BrokenPipeError):
+            self._recover()
+            return None
+        return tuple(d) if d else None
+
     def run(self, code: str, as_of: str, timeout: float = 60.0) -> ExecResult:
         try:
             d = self._call(("run", code, as_of, timeout), timeout + 30)
@@ -346,7 +406,7 @@ class SandboxClient:
             self._recover()
             return ExecResult(ok=False, error=f"sandbox worker failure: {e}")
         return ExecResult(ok=bool(d.get("ok")), answer_type=d.get("answer_type"), answer=d.get("answer"), reason=d.get("reason"),
-                          stdout=d.get("stdout", ""), error=d.get("error"), elapsed=float(d.get("elapsed", 0.0)))
+                          stdout=d.get("stdout", ""), error=d.get("error"), elapsed=float(d.get("elapsed", 0.0)), lineage=list(d.get("lineage") or []))
 
     def _recover(self):
         """Restart a dead/stuck worker and reload the last business."""

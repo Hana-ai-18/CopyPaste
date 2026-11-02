@@ -10,7 +10,8 @@ from .answer_format import answer_key, make_record
 from .llm import LLMBackend
 from .qnorm import Vocab, amounts_note, default_vocab, normalize_question
 from .rulebook import select_rulebook
-from .prompts import build_empty_repair_messages, build_messages, build_repair_messages
+from .intent import audit_code, resolve_periods, rule_checklist
+from .prompts import build_audit_messages, build_empty_repair_messages, build_messages, build_repair_messages
 from .retrieval import ExemplarBank
 from .sandbox import ExecResult, LoadInfo, SandboxClient
 
@@ -57,6 +58,8 @@ class Candidate:
     key: str | None = None
     repairs: int = 0
     messages: list = field(default_factory=list)
+    issues: list = field(default_factory=list)      # self-check findings that survived the audit round
+    question: str = ""
 
 
 @dataclass
@@ -69,6 +72,7 @@ class AgentResult:
     votes: dict
     candidates: list
     elapsed: float
+    ref: dict | None = None      # independent second computation (refcalc.py): {'answer':..., 'agree': bool} or None when it had no opinion
 
 
 class BusinessContext:
@@ -115,6 +119,7 @@ class DataMateAgent:
         self.a = cfg["agent"]
         self.bank = bank or ExemplarBank([])
         self.fast_mode = False
+        self.pace_s = None
 
     # ------------------------------------------------------------------ prompt
     def _messages(self, ctx: BusinessContext, rulebook: str, question: str, as_of: str, variant: int, exemplars: list[dict]):
@@ -145,10 +150,23 @@ class DataMateAgent:
             stages = [stages[0]]
         max_repairs = 0 if self.fast_mode else int(self.a["max_repairs"])
         limit = float(self.a["per_question_time_s"])
+        if getattr(self, "pace_s", None):
+            limit = min(limit, float(self.pace_s))
         try:
             qn = normalize_question(question, ctx.vocab(), lex=ctx.lexicon())
         except Exception:  # noqa: BLE001 - normalisation is a help, never a failure point
             qn = question
+        if self.a.get("engine_first", True) and not self.fast_mode:
+            # Plain questions of the engine's families need no model at all: faster (inference time breaks leaderboard ties) and not exposed to sampling noise.
+            try:
+                ref = self.sb.ref(qn, as_of, timeout=60.0)
+            except Exception:  # noqa: BLE001
+                ref = None
+            if ref:
+                rec = {"type": ref[0], "answer": ref[1]}
+                res = AgentResult(rec, "answer", 1.0, rec, 0, {}, [], time.time() - t0)
+                res.ref = {"answer": ref[1], "agree": None, "used": True, "engine_first": True}
+                return res
         exemplars = self.bank.search(qn, int(self.a["n_exemplars"]))
         try:
             amt = amounts_note(question)
@@ -158,6 +176,22 @@ class DataMateAgent:
             question = f"{question.strip()}\n(Reading with shorthand and typing artefacts expanded automatically - may be imperfect, the original above is authoritative: {qn.strip()})"
         if amt:
             question = f"{question.strip()}\n(Amounts in the question: {amt})"
+        try:
+            per = resolve_periods(qn, as_of)
+            if per:
+                question = f"{question.strip()}\n(Periods computed in Python from as_of={as_of} with the rulebook's rules - use these dates exactly:\n" + "\n".join(per) + ")"
+            chk = rule_checklist(qn)
+            if chk:
+                question = f"{question.strip()}\n(Rules that apply to this question - the rulebook above has the details:\n" + "\n".join("* " + c for c in chk) + ")"
+        except Exception:  # noqa: BLE001 - advisory only
+            pass
+        self._q_for_audit = qn
+        try:
+            from .intent import line_columns_from_profile
+
+            self._line_cols = line_columns_from_profile(ctx.info.profile)
+        except Exception:  # noqa: BLE001
+            self._line_cols = None
         cands: list[Candidate] = []
         done = 0
         for st in stages:
@@ -172,7 +206,32 @@ class DataMateAgent:
                 break
             if time.time() - t0 > limit:
                 break
-        return self._decide(cands, done, time.time() - t0)
+        res = self._decide(cands, done, time.time() - t0)
+        return self._crosscheck(res, qn, as_of)
+
+    def _crosscheck(self, res: AgentResult, question: str, as_of: str) -> AgentResult:
+        """Independent engine (refcalc) for plain 'revenue / number of orders in one period' questions (99% right on the train shops, see CA_KHO_PRIVATE_TEST D4).
+        Agreement: keep. Disagreement or model abstained: the ENGINE's value is submitted (three identical wrong programs still agree with each other,
+        so the vote alone cannot be trusted; a blank earns 0, the engine earns about +1 in expectation). No opinion from the engine: no change."""
+        if self.fast_mode or res.decision == "unanswerable" or (res.record.get("type") not in ("number", "percent", "abstain")):
+            return res
+        try:
+            ref = self.sb.ref(question, as_of, timeout=60.0)
+        except Exception:  # noqa: BLE001
+            ref = None
+        if not ref:
+            return res
+        try:
+            tol = 0.5 if ref[0] == "number" else 0.0051
+            same = res.record.get("type") == ref[0] and abs(float(ref[1]) - float(res.record["answer"])) < tol
+        except Exception:  # noqa: BLE001
+            return res
+        res.ref = {"answer": ref[1], "agree": bool(same), "used": not same}
+        if not same:
+            rec = {"type": ref[0], "answer": ref[1]}
+            res.record, res.top_record, res.decision = rec, rec, "answer"
+            res.confidence = max(res.confidence, 0.6)
+        return res
 
     def _run_variants(self, ctx, rulebook, question, as_of, variants, exemplars, max_repairs, t0, limit) -> list[Candidate]:
         batch = [self._messages(ctx, rulebook, question, as_of, v, exemplars) for v in variants]
@@ -198,7 +257,43 @@ class DataMateAgent:
                     self._execute(c, as_of, self._exec_timeout(t0, limit))
         if max_repairs > 0 and time.time() - t0 <= limit:
             self._empty_round(cands, as_of, t0, limit)
+        if max_repairs > 0 and time.time() - t0 <= limit:
+            self._audit_round(cands, as_of, t0, limit)
+        else:
+            self._audit_mark(cands)
         return cands
+
+    def _audit_mark(self, cands: list[Candidate]) -> None:
+        for c in cands:
+            if c.result is not None and c.result.ok and c.code:
+                try:
+                    c.issues = audit_code(getattr(self, "_q_for_audit", ""), c.code, c.result.answer_type, c.result.answer, getattr(self, "_line_cols", None), getattr(c.result, "lineage", None))
+                except Exception:  # noqa: BLE001
+                    c.issues = []
+
+    def _audit_round(self, cands: list[Candidate], as_of: str, t0: float, limit: float) -> None:
+        """One targeted repair for candidates whose code breaks an unmistakable rule (e.g. revenue without a status filter). The old result is kept if the retry fails."""
+        self._audit_mark(cands)
+        todo = [c for c in cands if c.issues and c.code]
+        if not todo:
+            return
+        rep = [build_audit_messages(c.messages, c.code, c.issues, c.result.stdout) for c in todo]
+        fixed = self.llm.generate_batch(rep)
+        for c, m, t in zip(todo, rep, fixed):
+            new_code = extract_code(t)
+            if not new_code or new_code.strip() == (c.code or "").strip():
+                continue
+            old = (c.code, c.result, c.key, c.messages, c.issues)
+            c.code, c.messages = new_code, m
+            self._execute(c, as_of, self._exec_timeout(t0, limit))
+            c.repairs += 1
+            if c.result and c.result.ok and c.key:
+                try:
+                    c.issues = audit_code(getattr(self, "_q_for_audit", ""), c.code, c.result.answer_type, c.result.answer, getattr(self, "_line_cols", None), getattr(c.result, "lineage", None))
+                except Exception:  # noqa: BLE001
+                    c.issues = []
+            else:
+                c.code, c.result, c.key, c.messages, c.issues = old
 
     def _empty_round(self, cands: list[Candidate], as_of: str, t0: float, limit: float) -> None:
         """One extra round for candidates that ran fine but returned 0 / empty: usually a wrong filter. Keep the old result unless the retry is valid."""
@@ -260,6 +355,9 @@ class DataMateAgent:
         top_key = sorted(votes, key=lambda k: (-votes[k], first_idx[k]))[0]
         top = next(c for c in cands if c.key == top_key)
         conf = votes[top_key] / n_run
+        flagged = [c for c in cands if c.key == top_key and c.issues]
+        if flagged and len(flagged) == sum(1 for c in cands if c.key == top_key):
+            conf *= 0.75           # every voter for this answer still breaks a rule the self-check is sure about: do not trust unanimity
         r = top.result
         if r.answer_type == "unanswerable":
             top_rec = {"type": "unanswerable", "reason": r.reason or ""}

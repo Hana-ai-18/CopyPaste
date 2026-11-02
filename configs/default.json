@@ -23,6 +23,7 @@
     "max_repairs": 2,
     "exec_timeout_s": 60,
     "threshold_answer": 0.6,
+    "engine_first": true,
     "threshold_unanswerable": 0.8,
     "per_question_time_s": 150,
     "min_time_per_question_s": 20,

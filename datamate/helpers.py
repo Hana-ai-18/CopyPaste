@@ -201,6 +201,10 @@ def to_num(s) -> pd.Series:
             return float("nan")
         if isinstance(v, (int, float, np.integer, np.floating)):
             return float(v)
+        m = _re.fullmatch(r"\s*(\d+)\s*(tr|trieu|k|nghin|ngan)\s*(\d{1,3})\s*(?:d|đ|vnd|vnđ)?\s*", strip_accents(str(v)).lower())
+        if m:                                                   # '1tr090' = 1 090 000, '2tr5' = 2 500 000, '1k5' = 1 500
+            unit = 1e6 if m.group(2) in ("tr", "trieu") else 1e3
+            return int(m.group(1)) * unit + int(m.group(3)) * unit / 10 ** len(m.group(3))
         if len(_re.findall(r"\d[\d.,]*", str(v))) != 1:       # none, or several numbers ('1 bao 25kg') -> not a plain number
             return float("nan")
         mult = 1.0
@@ -250,8 +254,8 @@ def norm_status(s) -> pd.Series:
         if not isinstance(v, str):
             return "khac"
         t = strip_accents(v).lower().strip()
-        if "khong giao duoc" in t:
-            return "khac"
+        if "khong giao duoc" in t:      # an order that could not be delivered counts as cancelled (train biz_118: gold cancel rates only match this way)
+            return "huy"
         if _ST_HUY.search(t):
             return "huy"
         if _ST_TRA.search(t):
@@ -418,6 +422,20 @@ class LunarCalendar:
         return start, end
 
 
+def order_amounts(df: pd.DataFrame, order_col: str, amount_col: str) -> pd.DataFrame:
+    """One row per order with its amount ('amount'), correct whichever way the column is stored: if the amount is the SAME on every line of an order it is an order total (taken once); if it differs between lines it is a LINE amount (summed over the lines). Filter the rows (period, status) BEFORE calling."""
+    d = df[[order_col, amount_col]].copy()
+    d["_a"] = to_num(d[amount_col])
+    multi = d[d[order_col].duplicated(keep=False)]
+    order_level = False
+    if len(multi):
+        spread = multi.groupby(order_col)["_a"].nunique(dropna=False)
+        order_level = bool((spread <= 1).mean() >= 0.98)
+    g = d.groupby(order_col, sort=False)["_a"]
+    out = (g.first() if order_level else g.sum(min_count=1)).rename("amount").reset_index()
+    return out
+
+
 # --------------------------------------------------------------------------- namespace builder
 def build_helpers(as_of: dt.date, lunar: LunarCalendar | None) -> dict[str, Callable]:
     """Functions with `as_of`/`lunar` bound; the dict is merged into the sandbox namespace."""
@@ -448,7 +466,7 @@ def build_helpers(as_of: dt.date, lunar: LunarCalendar | None) -> dict[str, Call
         "last_quarter": last_quarter, "this_quarter_to_date": this_quarter_to_date,
         "year_range": year_range, "this_year_to_date": this_year_to_date, "last_year": last_year,
         "last_n_days": last_n_days, "same_period_last_year": same_period_last_year, "shift_years": shift_years,
-        "days_in": days_in, "parse_dates": parse_dates, "to_num": to_num, "rows_in_period": rows_in_period, "norm_status": norm_status, "anon_customer": anon_customer, "data_span": data_span, "between": between, "rank_top": rank_top,
+        "days_in": days_in, "parse_dates": parse_dates, "to_num": to_num, "rows_in_period": rows_in_period, "norm_status": norm_status, "anon_customer": anon_customer, "data_span": data_span, "between": between, "rank_top": rank_top, "order_amounts": order_amounts,
         "contains_vi": contains_vi, "fuzzy_find": fuzzy_find, "vi_key": vi_key, "strip_accents": strip_accents,
         "tet_window": tet_window, "tet_date": tet_date, "lunar_of": lunar_of,
     }
