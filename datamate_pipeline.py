@@ -2397,8 +2397,28 @@ class LLM:
             from vllm import LLM as VLLM, SamplingParams
             import torch
             dtype = "float16" if torch.cuda.get_device_capability()[0] < 8 else "bfloat16"
-            self.engine = VLLM(model=model, dtype=dtype, max_model_len=max_model_len, tensor_parallel_size=tp,
-                               gpu_memory_utilization=gpu_mem, enable_prefix_caching=True, seed=SEED, trust_remote_code=True)
+            base = dict(model=model, dtype=dtype, max_model_len=max_model_len, tensor_parallel_size=tp,
+                        gpu_memory_utilization=gpu_mem, seed=SEED, trust_remote_code=True)
+            # model đa phương thức (vd Qwen3.5) chỉ dùng chữ: không dành bộ nhớ cho bộ mã hoá ảnh.
+            # Thử từ cấu hình đầy đủ -> bớt dần tham số mà bản vLLM đang cài không hiểu / không hỗ trợ cho kiến trúc này.
+            mm = any(k in model.lower() for k in ("qwen3.5", "qwen3_5", "qwen3.6", "-vl"))   # model ảnh+chữ
+            no_img = {"limit_mm_per_prompt": {"image": 0, "video": 0}}
+            if mm:
+                tries = [dict(enable_prefix_caching=True, **no_img), dict(enable_prefix_caching=False, **no_img),
+                         dict(enable_prefix_caching=True), dict()]
+            else:                                   # model chỉ chữ: cấu hình y như trước
+                tries = [dict(enable_prefix_caching=True), dict()]
+            err = None
+            for extra in tries:
+                try:
+                    self.engine = VLLM(**base, **extra)
+                    self.vllm_extra = extra
+                    break
+                except (TypeError, ValueError, NotImplementedError) as e:   # tham số không hợp -> thử bộ sau (lỗi CUDA/OOM thì ném ra luôn)
+                    err = e
+                    print(f"  [vLLM] cấu hình {extra} không dùng được ({type(e).__name__}: {str(e)[:160]}) -> thử bớt", flush=True)
+            else:
+                raise err
             self.sp = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_new_tokens, seed=SEED)
             self.tok = self.engine.get_tokenizer()
         elif backend == "hf":
@@ -2412,7 +2432,11 @@ class LLM:
                     kw["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16)
                 except Exception:
                     pass
-            self.hf = AutoModelForCausalLM.from_pretrained(model, **kw).eval()
+            try:
+                self.hf = AutoModelForCausalLM.from_pretrained(model, **kw).eval()
+            except (ValueError, KeyError):             # model đa phương thức (Qwen3.5…): lớp ảnh-chữ, vẫn chỉ đưa chữ vào
+                from transformers import AutoModelForImageTextToText
+                self.hf = AutoModelForImageTextToText.from_pretrained(model, **kw).eval()
         elif backend == "dummy":
             pass
         else:
@@ -2420,7 +2444,12 @@ class LLM:
 
     def _fmt(self, messages):
         if self.tok is not None:
-            return self.tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            # enable_thinking=False: Qwen3/3.5 mặc định "nghĩ" trước khi trả lời -> tiêu hết max_tokens vào phần nghĩ, không còn code.
+            # Template không có biến này (Qwen2.5…) thì Jinja bỏ qua tham số thừa -> prompt y hệt cũ.
+            try:
+                return self.tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+            except TypeError:
+                return self.tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         return "\n\n".join(f"<{m['role']}>\n{m['content']}" for m in messages)
 
     def _k(self, prompt):
@@ -2467,7 +2496,7 @@ class LLM:
                 from vllm import SamplingParams
                 sp = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_tokens, seed=SEED)
                 res = self.engine.generate([prompts[i] for i in todo], sp, use_tqdm=False)
-                outs = [r.outputs[0].text for r in res]
+                outs = [self.strip_think(r.outputs[0].text) for r in res]
             elif self.backend == "hf":
                 import torch
                 outs = []
@@ -2475,7 +2504,7 @@ class LLM:
                     ids = self.tok(prompts[i], return_tensors="pt").to(self.hf.device)
                     with torch.no_grad():
                         g = self.hf.generate(**ids, max_new_tokens=max_tokens, do_sample=False)
-                    outs.append(self.tok.decode(g[0][ids["input_ids"].shape[1]:], skip_special_tokens=True))
+                    outs.append(self.strip_think(self.tok.decode(g[0][ids["input_ids"].shape[1]:], skip_special_tokens=True)))
             else:
                 outs = ["A"] * len(todo)        # dummy: luôn chọn phương án đầu (= lựa chọn của bộ sửa chữ)
             with open(self.cache_path, "a", encoding="utf-8") as fh:
@@ -2484,7 +2513,19 @@ class LLM:
                     fh.write(jdump({"k": keys[i], "v": o}) + "\n")
         return [self.cache[k] for k in keys]
 
+    @staticmethod
+    def strip_think(t):
+        """Bỏ phần <think>…</think> (model có chế độ nghĩ). Thẻ mở mà không đóng (nghĩ đến hết max_tokens) -> rỗng."""
+        if "<think>" not in t and "</think>" not in t:
+            return t
+        if "</think>" in t:
+            return t.split("</think>")[-1].lstrip()
+        return ""
+
     def _gen(self, prompts):
+        return [self.strip_think(o) for o in self._gen_raw(prompts)]
+
+    def _gen_raw(self, prompts):
         if self.backend == "vllm":
             res = self.engine.generate(prompts, self.sp, use_tqdm=False)
             return [r.outputs[0].text for r in res]

@@ -33,7 +33,8 @@ md(r"""
 **Kết quả:** `/kaggle/working/submission.jsonl` (đủ 1 dòng/câu public, đúng thứ tự `questions.jsonl`) + `outputs.zip` (log).
 
 Notebook **không chấm** public (không có và không dùng đáp án public — quy định 6). Chỉ chấm trên TRAIN.
-Mọi bước có dự phòng: cài vLLM lỗi → thử bản khác → backend `hf`; model lỗi giữa chừng → vẫn có đáp án của đường máy tính;
+Model: `MODEL` ở ô 0 (mặc định Qwen3.5-9B). Không chạy được trên máy này → tự lùi về `FALLBACK_MODEL` (Qwen2.5-Coder-7B-AWQ),
+dòng cuối ô 4 ghi rõ model đang dùng. Mọi bước có dự phòng: cài vLLM lỗi → thử bản khác → backend `hf`; model lỗi giữa chừng → vẫn có đáp án của đường máy tính;
 sắp hết 12 giờ → tự dừng và ghi file nộp đủ câu.
 """)
 
@@ -47,8 +48,9 @@ BRANCH     = ""                        # "" = nhánh mặc định của repo
 INPUT_DIR  = "/kaggle/input/datasets/gmnguynhng/copypaste"
 WORK       = "/kaggle/working"
 
-MODEL      = "Qwen/Qwen2.5-Coder-7B-Instruct-AWQ"   # vLLM (T4: AWQ fp16)
-MODEL_HF   = "Qwen/Qwen2.5-Coder-7B-Instruct"       # chỉ dùng nếu phải lùi về backend hf (4-bit bitsandbytes, CHẬM)
+MODEL      = "Qwen/Qwen3.5-9B"                      # model muốn dùng. Qwen3.5 cần vLLM ≥ 0.17 + 2 GPU (fp16 ~19 GB)
+FALLBACK_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct-AWQ"   # MODEL không chạy được trên máy này -> tự lùi về model này (đã chạy ổn)
+MODEL_HF   = "Qwen/Qwen2.5-Coder-7B-Instruct"       # chỉ dùng nếu mọi bản vLLM đều lỗi: backend hf (4-bit bitsandbytes, CHẬM)
 MAX_LEN    = 28000                     # đủ cho rulebook + thẻ dữ liệu + câu hỏi; prompt dài hơn tự bỏ qua câu đó
 N_PATHS    = 2                         # 2 đường độc lập, chỉ trả lời khi đồng thuận
 SESSION_HOURS = 11.5                   # Kaggle cắt phiên ở 12 giờ: để dư 30 phút
@@ -181,37 +183,36 @@ print("CODE:", CODE, "| thiếu:", miss or "không")
 assert not miss, f"Repo thiếu file: {miss} — đẩy đủ code lên GitHub"
 ''')
 
-md("## 4. Cài vLLM và chọn backend chạy được thật trên GPU này\n"
-   "Thử lần lượt (mỗi lần nạp THẬT model trong tiến trình riêng, sinh thử vài token):\n"
-   "`vllm 0.10.1.1` (T4 chạy engine V0 + xformers) TP=2 → TP=1 → `vllm 0.8.5.post1` → backend `hf`.\n"
-   "Lần thử thành công cũng đã tải sẵn model về máy.")
+md("## 4. Cài vLLM và chọn model + backend chạy được THẬT trên GPU này\n"
+   "Mỗi lần thử: cài bản vLLM hợp với model → nạp model bằng CHÍNH lớp `LLM` của pipeline trong tiến trình riêng → "
+   "hỏi `17 + 25` và đòi đúng `42` (bắt cả lỗi fp16 ra chữ rác, model vẫn 'nghĩ' dù đã tắt).\n"
+   "Thứ tự: `MODEL` → `FALLBACK_MODEL` → backend `hf` → không LLM. Lần thử thành công cũng đã tải sẵn model.")
 code(r'''
-PROBE = f"{WORK}/probe_vllm.py"
+def install_plan(model):
+    """[(lệnh pip, env, các TP thử)] theo họ model. Qwen3.5 (lai Gated DeltaNet) cần vLLM ≥ 0.17 (chỉ engine V1);
+    bản ≥ 0.20 dùng CUDA 13 (driver Kaggle có thể không chạy) nên ghim 0.19.1 / 0.17.1 (CUDA 12.8).
+    Qwen2.5: vLLM 0.10.1.1 / 0.8.5 engine V0 (đường chạy quen của T4)."""
+    m = model.lower()
+    if "qwen3.5" in m or "qwen3_5" in m:
+        tps = [2] if N_GPU >= 2 else [1]           # fp16 ~19 GB: 1 T4 (15 GB) không đủ
+        return [("'vllm==0.19.1'", {}, tps),
+                ("'vllm==0.17.1' 'transformers>=4.57,<5'", {}, tps)]
+    tps = [2, 1] if N_GPU >= 2 else [1]
+    return [("'vllm==0.10.1.1' 'transformers>=4.55,<4.57'", {"VLLM_USE_V1": "0"}, tps),
+            ("'vllm==0.8.5.post1' 'transformers>=4.51,<4.53'", {"VLLM_USE_V1": "0"}, tps)]
+
+PROBE = f"{WORK}/probe_llm.py"
 open(PROBE, "w").write(r"""
-import sys, time
-m, tp, maxlen = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
-import torch
-from vllm import LLM, SamplingParams
-dt = "float16" if torch.cuda.get_device_capability()[0] < 8 else "bfloat16"
+import sys, time, tempfile
+code, backend, model, tp, maxlen = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
+sys.path.insert(0, code)
+import datamate_pipeline as d                  # dùng ĐÚNG lớp LLM mà pipeline dùng (cùng tham số, cùng chat template)
 t = time.time()
-llm = LLM(model=m, dtype=dt, max_model_len=maxlen, tensor_parallel_size=tp, gpu_memory_utilization=0.90,
-          enable_prefix_caching=True, seed=0, trust_remote_code=True)
-o = llm.generate(["def add(a, b):"], SamplingParams(temperature=0.0, max_tokens=16))
-txt = o[0].outputs[0].text
-assert txt.strip(), "sinh ra rỗng"
-print("PROBE_OK", repr(txt[:60]), f"{time.time() - t:.0f}s")
-""")
-PROBE_HF = f"{WORK}/probe_hf.py"
-open(PROBE_HF, "w").write(r"""
-import sys, torch
-assert torch.cuda.is_available(), "torch không thấy CUDA"
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-m = sys.argv[1]
-tok = AutoTokenizer.from_pretrained(m)
-mod = AutoModelForCausalLM.from_pretrained(m, device_map="auto", torch_dtype=torch.float16,
-        quantization_config=BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16))
-ids = tok("def add(a, b):", return_tensors="pt").to(mod.device)
-print("PROBE_OK", tok.decode(mod.generate(**ids, max_new_tokens=8, do_sample=False)[0]))
+llm = d.LLM(backend, model, tempfile.mkdtemp(), max_model_len=maxlen, tp=tp)
+out = llm.generate([[{"role": "user", "content": "Chỉ trả lời bằng đúng một số, không giải thích: 17 + 25 = ?"}]])[0]
+print("OUT", repr(out[:200]), "| vllm_extra =", getattr(llm, "vllm_extra", None))
+assert "42" in out, "trả lời sai / rỗng (fp16 hỏng? model vẫn đang nghĩ?)"
+print("PROBE_OK", f"{time.time() - t:.0f}s")
 """)
 
 def fix_core_libs():
@@ -225,44 +226,52 @@ def fix_core_libs():
     print("thư viện lõi:", out.strip().splitlines()[-1] if out.strip() else "?", "| OK" if rc == 0 else "| VẪN LỖI")
     return rc == 0
 
-VLLM_ENV = {"VLLM_WORKER_MULTIPROC_METHOD": "spawn", "TOKENIZERS_PARALLELISM": "false"}
+BASE_ENV = {"VLLM_WORKER_MULTIPROC_METHOD": "spawn", "TOKENIZERS_PARALLELISM": "false"}
+RUN_ENV = dict(BASE_ENV)
 BACKEND, TP, RUN_MODEL = None, 1, MODEL
+TRIED = []
 if TEST_MODE or N_GPU == 0:
-    BACKEND = "dummy"
+    BACKEND = "dummy" if TEST_MODE else "none"
 else:
-    # ghim transformers cùng thời với bản vLLM: transformers mới (5.x) trong image Kaggle có thể không hợp vLLM cũ
-    attempts = [("'vllm==0.10.1.1' 'transformers>=4.55,<4.57'", {"VLLM_USE_V1": "0"}),
-                ("'vllm==0.8.5.post1' 'transformers>=4.51,<4.53'", {"VLLM_USE_V1": "0"})]
-    for spec, extra_env in attempts:
-        rc, _ = sh(f"pip install -q {spec} python-calamine openpyxl pyyaml scikit-learn", check=False, quiet=True,
-                   timeout=1800)
-        if rc:
-            print(f"Cài {spec} lỗi → thử phương án sau"); continue
-        fix_core_libs()
-        for tp in ([2, 1] if N_GPU >= 2 else [1]):
-            rc, out = sh(f"python {PROBE} {MODEL} {tp} {MAX_LEN}", check=False, quiet=True, timeout=2400,
-                         env={**VLLM_ENV, **extra_env})
-            ok = rc == 0 and "PROBE_OK" in out
-            print(f"  {spec} TP={tp}: {'CHẠY ĐƯỢC' if ok else 'lỗi'}")
-            if ok:
-                BACKEND, TP = "vllm", tp
-                VLLM_ENV.update(extra_env)
+    for model in dict.fromkeys([MODEL, FALLBACK_MODEL]):        # bỏ trùng, giữ thứ tự
+        for spec, extra_env, tps in install_plan(model):
+            rc, _ = sh(f"pip install -q {spec} python-calamine openpyxl pyyaml scikit-learn", check=False, quiet=True,
+                       timeout=1800)
+            if rc:
+                print(f"Cài {spec} lỗi → thử phương án sau"); TRIED.append((model, spec, "cài lỗi")); continue
+            fix_core_libs()
+            for tp in tps:
+                rc, out = sh(f"python {PROBE} '{CODE}' vllm {model} {tp} {MAX_LEN}", check=False, quiet=True,
+                             timeout=2700, env={**BASE_ENV, **extra_env})
+                ok = rc == 0 and "PROBE_OK" in out
+                print(f"  {model} | {spec} | TP={tp}: {'CHẠY ĐƯỢC' if ok else 'lỗi'}")
+                TRIED.append((model, spec, tp, "ok" if ok else "lỗi"))
+                if ok:
+                    BACKEND, TP, RUN_MODEL = "vllm", tp, model
+                    RUN_ENV.update(extra_env)
+                    break
+            if BACKEND:
                 break
         if BACKEND:
             break
+        print(f"!!! {model} không chạy được trên máy này → thử model sau")
     if BACKEND is None:
-        print("!!! vLLM không chạy được trên máy này → backend hf (chậm hơn nhiều; hết giờ thì câu còn lại = đáp án máy tính)")
+        print("!!! vLLM không chạy được → backend hf (chậm hơn nhiều; hết giờ thì câu còn lại = đáp án máy tính)")
         sh("pip install -q -U 'transformers>=4.45' accelerate bitsandbytes python-calamine openpyxl pyyaml scikit-learn",
            check=False, quiet=True, timeout=1800)
-        rc, out = sh(f"python {PROBE_HF} {MODEL_HF}", check=False, quiet=True, timeout=2400)
+        rc, out = sh(f"python {PROBE} '{CODE}' hf {MODEL_HF} 1 {MAX_LEN}", check=False, quiet=True, timeout=2700)
         if rc == 0 and "PROBE_OK" in out:
             BACKEND, RUN_MODEL = "hf", MODEL_HF
         else:
             print("!!! Không backend LLM nào chạy được → chỉ dùng đường máy tính (vẫn ra file nộp đủ câu)")
             BACKEND = "none"
-os.environ.update(VLLM_ENV)        # các lệnh python chạy sau (pipeline) kế thừa
+for k in ("VLLM_USE_V1",):
+    os.environ.pop(k, None)
+os.environ.update(RUN_ENV)         # các lệnh python chạy sau (pipeline) kế thừa đúng env của lần thử thành công
 sh("pip install -q python-calamine openpyxl pyyaml scikit-learn", check=False, quiet=True)
 fix_core_libs()
+if RUN_MODEL != MODEL and BACKEND in ("vllm", "hf"):
+    print(f"!!! LƯU Ý: đang dùng {RUN_MODEL}, KHÔNG phải MODEL = {MODEL} (MODEL không chạy được trên máy này)")
 print(f"BACKEND = {BACKEND} | TP = {TP} | MODEL = {RUN_MODEL} | VLLM_USE_V1 = {os.environ.get('VLLM_USE_V1')}")
 ''')
 

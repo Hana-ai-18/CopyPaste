@@ -101,8 +101,9 @@ Chạy lại cùng lệnh thì **tiếp tục** từ câu chưa làm; thêm `--f
 3. Notebook `notebooks/datamate_kaggle.ipynb`: *Accelerator = GPU T4 x2*, *Internet = On*, *Add Input* dataset `gmnguynhng/copypaste`.
 4. **Run All** → `/kaggle/working/submission.jsonl` (+ `outputs.zip` log).
 
-Notebook tự: giải nén dữ liệu, tìm train (có `answers.jsonl`) / public, clone code, cài vLLM bản chạy được trên T4
-(thử `vllm 0.10.1.1` engine V0 → `0.8.5.post1` → backend `hf` → không LLM), nạp thử model thật trước khi chạy, dựng
+Notebook tự: giải nén dữ liệu, tìm train (có `answers.jsonl`) / public, clone code, chọn model + bản vLLM chạy được
+(`MODEL` mặc định Qwen3.5-9B với vLLM 0.19.1/0.17.1 → lùi về Qwen2.5-Coder-7B-AWQ với vLLM 0.10.1.1/0.8.5 → backend `hf`
+→ không LLM), nạp thử model thật bằng lớp `LLM` của pipeline và đòi trả lời đúng một phép cộng, dựng
 `spec_bank` từ train, đo nhanh trên train, chạy public với ngân sách = thời gian còn lại của phiên, kiểm định dạng và ghi file nộp.
 Sửa notebook: sửa `notebooks/build_kaggle_notebook.py` rồi chạy `python notebooks/build_kaggle_notebook.py`.
 

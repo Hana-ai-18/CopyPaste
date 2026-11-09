@@ -364,3 +364,19 @@ def test_notebook_valid_types_match_pipeline():
     src = open(os.path.join(here, "..", "notebooks", "build_kaggle_notebook.py"), encoding="utf-8").read()
     m = re.search(r"VALID = (\{[^}]*\})", src)
     assert m and ast.literal_eval(m.group(1)) == d.VALID_TYPES
+
+
+def test_strip_think_and_no_thinking_template():
+    """Qwen3/3.5: tắt chế độ nghĩ trong chat template; nếu vẫn có <think>…</think> thì bỏ, nghĩ dở (không đóng) -> rỗng (= abstain)."""
+    import datamate_pipeline as d
+    f = d.LLM.strip_think
+    assert f("```python\nx\n```") == "```python\nx\n```"
+    assert f("<think>\n\n</think>\n\nA") == "A"
+    assert f("<think>đang nghĩ dở") == ""
+
+    class Tok:
+        def apply_chat_template(self, m, tokenize=False, add_generation_prompt=True, **kw):
+            return "think-off" if kw.get("enable_thinking") is False else "think-on"
+    llm = d.LLM.__new__(d.LLM)
+    llm.tok = Tok()
+    assert llm._fmt([{"role": "user", "content": "x"}]) == "think-off"
