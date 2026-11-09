@@ -1,5 +1,14 @@
-numpy>=1.26
-pandas>=2.1
+# Lõi (CPU): đọc dữ liệu, làm sạch, chấm điểm, sandbox
+pandas>=2.0
+numpy>=1.24
 openpyxl>=3.1
-duckdb>=1.0
-packaging
+python-calamine>=0.2
+pyyaml>=6.0             # đọc lexicon/error_catalog.yaml
+# LLM (GPU) — chọn 1
+vllm>=0.6.3            # khuyên dùng: batching + prefix caching
+# transformers>=4.44  accelerate  bitsandbytes  autoawq   # backend hf (dự phòng)
+scikit-learn>=1.3      # truy hồi câu giống (TF-IDF ký tự) khi không có bge-m3
+# Tuỳ chọn (GPU): PhoGPT chấm câu sửa chữ (--pho_model), bge-m3 truy hồi ví dụ (--embed_model)
+# transformers>=4.44 (PhoGPT cần trust_remote_code)   sentence-transformers>=2.7
+# Kiểm thử
+pytest>=7

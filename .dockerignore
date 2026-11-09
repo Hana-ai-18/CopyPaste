@@ -1,12 +1,22 @@
+# Ngữ cảnh build Docker: CHỈ code + lexicon + models. Không bao giờ đưa dữ liệu thi / đáp án / cache vào image.
 .git
-__pycache__
-.pytest_cache
-.ipynb_checkpoints
-tests
-demo_split
-out
-result
-train
-public_test
-private_test
+data/
+**/train/
+**/public_test/
+**/private_test/
 *.zip
+answers*.jsonl
+submission*.jsonl
+out*/
+outputs/
+cache/
+result/
+logs/
+*.pkl
+llm_cache*
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+# spec_bank.jsonl (câu train + đặc tả, không đáp án) ĐƯỢC vào image dù git bỏ qua nó
+!lexicon/spec_bank.jsonl

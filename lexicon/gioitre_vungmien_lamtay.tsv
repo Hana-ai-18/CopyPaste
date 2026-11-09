@@ -1,0 +1,383 @@
+# Teencode giới trẻ + từ vùng miền — VIẾT TAY. Cột: dạng <TAB> nghĩa (| nhiều nghĩa, nghĩa đầu mặc định) <TAB> nhóm <TAB> ghi chú
+# Nhóm: gioi_tre | viet_tat_chat | mxh (mạng xã hội) | bac | trung | nam | so_hoa (thay chữ bằng số)
+# Nhóm dong_nghia_*: từ đồng nghĩa theo vùng (heo/lợn, ly/cốc): KHÔNG dùng để sửa câu, chỉ dùng gợi ý khớp tên hàng.
+# KHÔNG đưa vào: từ thật hay gặp trong câu hỏi bán hàng (chi, qua, biểu, kêu, ảnh, chỉ, hè, cổ…): để ngữ cảnh xử lý.
+# --- phủ định / khẳng định
+hông	không	nam
+hổng	không	nam
+hơm	không	nam
+hăm	không	nam
+hôn	không	nam
+khum	không	gioi_tre
+khumm	không	gioi_tre
+hoq	không	gioi_tre
+hok	không|học	gioi_tre
+hk	không|học	gioi_tre
+k0	không	so_hoa
+kh0ng	không	so_hoa
+k00	không	so_hoa
+kog	không	gioi_tre
+khog	không	gioi_tre
+khôq	không	gioi_tre
+kôg	không	gioi_tre
+nỏ	không	trung
+nờ	không	trung
+hem	không	nam
+hông có	không có	nam
+hổng có	không có	nam
+hổng biết	không biết	nam
+hông bít	không biết	nam
+kb	không biết	viet_tat_chat
+kbt	không biết	viet_tat_chat
+kbiet	không biết	viet_tat_chat
+kp	không phải	viet_tat_chat
+kphai	không phải	viet_tat_chat
+kc	không có	viet_tat_chat
+kcj	không có gì	viet_tat_chat
+kcgi	không có gì	viet_tat_chat
+ksao	không sao	viet_tat_chat
+kq	kết quả	viet_tat_chat
+uk	ừ	gioi_tre
+uh	ừ	gioi_tre
+uhm	ừ	gioi_tre
+ukm	ừ	gioi_tre
+um	ừ	gioi_tre
+ừa	ừ	nam
+oki	ok	gioi_tre
+okie	ok	gioi_tre
+okela	ok	gioi_tre
+okê	ok	gioi_tre
+oce	ok	gioi_tre
+okla	ok	gioi_tre
+# --- đại từ, xưng hô
+mk	mình	viet_tat_chat
+mik	mình	gioi_tre
+mjk	mình	gioi_tre
+mjh	mình	gioi_tre
+mìk	mình	gioi_tre
+mềnh	mình	gioi_tre
+mih	mình	gioi_tre
+tớ	tớ	bac
+t	tôi|tao	viet_tat_chat
+tui	tôi	nam
+mầy	mày	nam
+bn	bạn|bao nhiêu	viet_tat_chat
+bạnn	bạn	gioi_tre
+ny	người yêu	viet_tat_chat
+nyc	người yêu cũ	viet_tat_chat
+ck	chồng|chuyển khoản	viet_tat_chat
+vk	vợ	viet_tat_chat
+cj	chị	gioi_tre
+chj	chị	gioi_tre
+ckj	chị	gioi_tre
+ah	anh|à	viet_tat_chat
+emm	em	gioi_tre
+ae	anh em	viet_tat_chat
+ace	anh chị em	viet_tat_chat
+acc	anh chị|tài khoản	viet_tat_chat
+mn	mọi người	viet_tat_chat
+mng	mọi người	viet_tat_chat
+mọi ng	mọi người	viet_tat_chat
+ng	người	viet_tat_chat
+ngta	người ta	viet_tat_chat
+nta	người ta	viet_tat_chat
+bme	bố mẹ	viet_tat_chat
+bm	bố mẹ|bánh mì	viet_tat_chat
+gđ	gia đình	viet_tat_chat
+gd	gia đình|giám đốc	viet_tat_chat
+mạ	mẹ	trung
+eng	anh	trung
+ả	chị	trung
+ổng	ông ấy	nam
+bả	bà ấy	nam
+tụi	bọn	nam
+tụi mình	chúng mình	nam
+tụi nó	bọn nó	nam
+# --- hỏi, đuôi câu
+j	gì	gioi_tre
+ji	gì	gioi_tre
+gj	gì	gioi_tre
+z	vậy	gioi_tre
+zậy	vậy	gioi_tre
+zị	vậy	gioi_tre
+dzậy	vậy	nam
+dzị	vậy	nam
+dị	vậy	nam
+vầy	vậy	nam
+dầy	vậy	nam
+zầy	vậy	gioi_tre
+zạ	vậy ạ	gioi_tre
+v	vậy|và	viet_tat_chat
+vs	với|so với	viet_tat_chat
+rứa	vậy	trung
+răng	sao	trung
+mô	nào|đâu	trung
+ni	này	trung
+nì	này	trung
+nớ	đó	trung
+tê	kia	trung
+ri	thế này	trung
+rứa thì	vậy thì	trung
+răng rứa	sao vậy	trung
+ở mô	ở đâu	trung
+chi rứa	gì vậy	trung
+nhen	nhé	nam
+nghen	nhé	nam
+hen	nhé	nam
+nha	nhé	nam
+nhaa	nhé	gioi_tre
+nhoa	nhé	gioi_tre
+hở	hả	nam
+hỉ	nhỉ|hả	trung
+nè	này	nam
+nà	này	nam
+á	à	nam
+ak	à	gioi_tre
+ạk	ạ	gioi_tre
+sao z	sao vậy	gioi_tre
+j z	gì vậy	gioi_tre
+là j	là gì	gioi_tre
+cái j	cái gì	gioi_tre
+lm j	làm gì	gioi_tre
+ntn	như thế nào	viet_tat_chat
+ntnao	như thế nào	viet_tat_chat
+tsao	tại sao	viet_tat_chat
+vsao	vì sao	viet_tat_chat
+bh	bây giờ	viet_tat_chat
+bjo	bây giờ	gioi_tre
+bjờ	bây giờ	gioi_tre
+bi giờ	bây giờ	nam
+chừ	bây giờ	trung
+giờ ni	bây giờ	trung
+hồi nãy	lúc nãy	nam
+bữa	hôm	nam
+bữa nay	hôm nay	nam
+bữa qua	hôm qua	nam
+bữa kia	hôm kia	nam
+hổm	hôm ấy	nam
+hum	hôm|không	gioi_tre
+hnay	hôm nay	viet_tat_chat
+hqua	hôm qua	viet_tat_chat
+hkia	hôm kia	viet_tat_chat
+mai mốt	sau này	nam
+# --- động từ, tính từ hay viết kiểu teen
+bít	biết	gioi_tre
+bik	biết	gioi_tre
+bjk	biết	gioi_tre
+bjt	biết	gioi_tre
+pít	biết	gioi_tre
+hỉu	hiểu	gioi_tre
+hiu	hiểu	gioi_tre
+hĩu	hiểu	gioi_tre
+thik	thích	gioi_tre
+thík	thích	gioi_tre
+thjk	thích	gioi_tre
+thjck	thích	gioi_tre
+thix	thích	gioi_tre
+mún	muốn	gioi_tre
+muns	muốn	gioi_tre
+iu	yêu	gioi_tre
+iêu	yêu	gioi_tre
+yêw	yêu	gioi_tre
+thươg	thương	gioi_tre
+thuong	thương	gioi_tre
+zui	vui	gioi_tre
+dzui	vui	nam
+bùn	buồn	gioi_tre
+bùn ngủ	buồn ngủ	gioi_tre
+lém	lắm	gioi_tre
+lắmm	lắm	gioi_tre
+wá	quá	gioi_tre
+qá	quá	gioi_tre
+wa	quá|qua	gioi_tre
+quáa	quá	gioi_tre
+dữ	lắm|dữ	nam
+dữ thần	rất nhiều	nam
+quá trời	rất nhiều	nam
+bộn	nhiều	nam
+nhìu	nhiều	gioi_tre
+nhju	nhiều	gioi_tre
+nhiềuu	nhiều	gioi_tre
+ít xì	rất ít	nam
+chút xíu	một chút	nam
+xíu	một chút	nam
+lun	luôn	gioi_tre
+luôn á	luôn	nam
+lẹ	nhanh	nam
+lẹ lên	nhanh lên	nam
+ráng	cố|ráng	nam
+xài	dùng|xài	nam
+mần	làm	nam
+lm	làm	viet_tat_chat
+lmj	làm gì	gioi_tre
+nhởi	chơi	trung
+chộ	thấy	trung
+thấyy	thấy	gioi_tre
+coi	xem|coi	nam
+dô	vào	nam
+dzô	vào	nam
+zô	vào	gioi_tre
+vô	vào|vô	nam
+lựa	chọn|lựa	nam
+mắc	đắt|mắc	nam
+mắc quá	đắt quá	nam
+rẻ rề	rất rẻ	nam
+thiệt	thật	nam
+hổng chịu	không chịu	nam
+chịu hông	có chịu không	nam
+được hông	được không	nam
+có hông	có không	nam
+phải hông	phải không	nam
+đúng hông	đúng không	nam
+thui	thôi	gioi_tre
+thoy	thôi	gioi_tre
+thôii	thôi	gioi_tre
+rùi	rồi	gioi_tre
+ròi	rồi	gioi_tre
+rầu	rồi	gioi_tre
+r	rồi	viet_tat_chat
+xog	xong	gioi_tre
+xg	xong	viet_tat_chat
+đc	được	viet_tat_chat
+dc	được	viet_tat_chat
+đk	được|điều kiện	viet_tat_chat
+dk	được|điều kiện	viet_tat_chat
+đươc	được	gioi_tre
+đuợc	được	gioi_tre
+dượt	được	nam
+cx	cũng	viet_tat_chat
+cg	cũng	viet_tat_chat
+cũg	cũng	gioi_tre
+cũq	cũng	gioi_tre
+ms	mới	viet_tat_chat
+mớii	mới	gioi_tre
+ns	nói	viet_tat_chat
+nóii	nói	gioi_tre
+nt	nhắn tin	viet_tat_chat
+ib	nhắn tin	mxh
+inb	nhắn tin	mxh
+rep	trả lời	mxh
+cmt	bình luận	mxh
+cmts	bình luận	mxh
+share	chia sẻ	mxh
+seen	đã xem	mxh
+onl	online	mxh
+off	offline	mxh
+fb	facebook	mxh
+zl	zalo	mxh
+tt	tiktok|thanh toán|trạng thái|tổng tiền	mxh
+ig	instagram	mxh
+fl	theo dõi	mxh
+flw	theo dõi	mxh
+ad	quản trị viên	mxh
+add	thêm	mxh
+lạii	lại	gioi_tre
+đy	đi	gioi_tre
+đj	đi	gioi_tre
+dj	đi	gioi_tre
+vs nhau	với nhau	gioi_tre
+# --- cảm thán, cảm ơn
+tks	cảm ơn	mxh
+thks	cảm ơn	mxh
+thx	cảm ơn	mxh
+camon	cảm ơn	gioi_tre
+cmon	cảm ơn	gioi_tre
+c.ơn	cảm ơn	gioi_tre
+xl	xin lỗi	viet_tat_chat
+sr	xin lỗi	mxh
+sorry	xin lỗi	mxh
+pls	làm ơn	mxh
+plz	làm ơn	mxh
+trùi ui	trời ơi	gioi_tre
+trời ui	trời ơi	gioi_tre
+chời ơi	trời ơi	gioi_tre
+chời	trời	gioi_tre
+u là trời	trời ơi	gioi_tre
+chèn ơi	trời ơi	nam
+chu choa	trời ơi	trung
+ôi giời	ôi trời	bac
+xỉu	ngất	gioi_tre
+cíu	cứu	gioi_tre
+cíu với	cứu với	gioi_tre
+ét o ét	cứu với	gioi_tre
+# --- học tập, công việc
+hs	học sinh	viet_tat_chat
+sv	sinh viên	viet_tat_chat
+gv	giáo viên|giá vốn	viet_tat_chat
+đh	đại học|đơn hàng	viet_tat_chat
+cty	công ty	viet_tat_chat
+vp	văn phòng	viet_tat_chat
+nv	nhân viên	viet_tat_chat
+kt	kiểm tra|kế toán	viet_tat_chat
+bt	bài tập|biết|bình thường	viet_tat_chat
+bth	bình thường	viet_tat_chat
+btw	nhân tiện	mxh
+vd	ví dụ	viet_tat_chat
+đt	điện thoại	viet_tat_chat
+sđt	số điện thoại	viet_tat_chat
+dt	điện thoại|doanh thu	viet_tat_chat
+ttin	thông tin	viet_tat_chat
+tg	thời gian	viet_tat_chat
+tgian	thời gian	viet_tat_chat
+đđ	địa điểm	viet_tat_chat
+đchỉ	địa chỉ	viet_tat_chat
+dchi	địa chỉ	viet_tat_chat
+# --- số hoá kiểu cũ (chỉ khi chữ có chữ số xen giữa chữ cái)
+b4	trước	so_hoa
+2day	hôm nay	so_hoa
+# --- trung (Nghệ Tĩnh, Huế)
+cấy	cái	trung
+nác	nước	trung
+đọi	bát	trung
+nhứt	nhất	trung
+rứa hè	vậy nhỉ	trung
+mô tê	đâu kia	trung
+khi mô	khi nào	trung
+răng mà	sao mà	trung
+ri nì	thế này	trung
+ni tê	này kia	trung
+# --- nam bộ
+bển	bên ấy	nam
+trển	trên ấy	nam
+ngoải	ngoài ấy	nam
+trỏng	trong ấy	nam
+bểnh	bên ấy	nam
+mấy bữa	mấy hôm	nam
+bữa giờ	mấy hôm nay	nam
+hồi đó	ngày trước	nam
+quẹo	rẽ	nam
+cà rem	kem	dong_nghia_nam
+nước đá	đá	dong_nghia_nam
+đậu phộng	lạc	dong_nghia_nam
+bột ngọt	mì chính	dong_nghia_nam
+xì dầu	nước tương	dong_nghia_nam
+muỗng	thìa	dong_nghia_nam
+chén	bát	dong_nghia_nam
+ly	cốc	dong_nghia_nam
+dĩa	đĩa	dong_nghia_nam
+heo	lợn	dong_nghia_nam
+thơm	dứa	dong_nghia_nam
+khóm	dứa	dong_nghia_nam
+bắp	ngô	dong_nghia_nam
+trái	quả	dong_nghia_nam
+bông	hoa	dong_nghia_nam
+mền	chăn	dong_nghia_nam
+dù	ô	dong_nghia_nam
+nón	mũ	dong_nghia_nam
+kiếng	kính	dong_nghia_nam
+khoai mì	sắn	dong_nghia_nam
+mãng cầu	na	dong_nghia_nam
+khổ qua	mướp đắng	dong_nghia_nam
+bông cải	súp lơ	dong_nghia_nam
+ổ bánh mì	bánh mì	dong_nghia_nam
+# --- bắc bộ
+thế nào	như thế nào	bac
+bao giờ	khi nào	bac
+cốc	ly	dong_nghia_bac
+bát	chén	dong_nghia_bac
+thìa	muỗng	dong_nghia_bac
+lợn	heo	dong_nghia_bac
+ngô	bắp	dong_nghia_bac
+lạc	đậu phộng	dong_nghia_bac
+dứa	thơm	dong_nghia_bac
+mì chính	bột ngọt	dong_nghia_bac

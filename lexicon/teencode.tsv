@@ -1,0 +1,639 @@
+# Bảng teencode / viết tắt / từ địa phương cho câu hỏi bán hàng.
+# Cột: viết_tắt <TAB> nghĩa (nhiều nghĩa cách nhau bằng |, nghĩa đầu là mặc định) <TAB> nhóm <TAB> ghi chú
+# Nhiều nghĩa: bộ sửa chữ theo ngữ cảnh (vn_context) chọn nghĩa hợp câu nhất; bộ sửa từng chữ dùng nghĩa đầu.
+# Không đưa vào đây: chữ không dấu của từ thật (thang, nam, cua…: đã có khôi phục dấu), số + đơn vị tiền (50k, 1tr5: đã khoá).
+# Thêm mục mới: một dòng, chạy lại `pytest -q` và `python scripts/eval_normalize.py`.
+ko	không	phủ định
+k	không|nghìn	phủ định	"50 k" đã được khoá như tiền trước khi tra bảng
+kh	không|khách hàng	phủ định
+hok	không	phủ định
+hk	không	phủ định
+hông	không	phủ định
+hổng	không	phủ định
+hong	không	phủ định
+khum	không	phủ định
+khôm	không	phủ định
+hem	không	phủ định
+hôk	không	phủ định
+hôg	không	phủ định
+khôg	không	phủ định
+kô	không	phủ định
+kg	kg|không	phủ định	thường là ki-lô-gam
+khg	không	phủ định
+kp	không phải	phủ định
+dc	được	chat
+đc	được	chat
+dk	được|điều kiện	chat
+đk	được|điều kiện	chat
+đuợc	được	chat
+dượt	được	chat
+j	gì	chat
+ji	gì	chat
+gì	gì	chat
+z	vậy	chat
+zậy	vậy	chat
+dzậy	vậy	chat
+zị	vậy	chat
+dị	vậy	địa phương
+zay	vậy	chat
+zạ	vậy	chat
+v	vậy|và	chat
+vậy	vậy	chat
+r	rồi	chat
+rùi	rồi	chat
+ròi	rồi	chat
+rầu	rồi	chat
+vs	với|so với	chat
+cx	cũng	chat
+cg	cũng	chat
+cũg	cũng	chat
+ns	nói	chat
+bt	biết|bình thường	chat
+bít	biết	chat
+bik	biết	chat
+bjk	biết	chat
+bjt	biết	chat
+ntn	như thế nào	chat
+mn	mọi người	chat
+mng	mọi người	chat
+mk	mình	chat
+mik	mình	chat
+mjk	mình	chat
+mềnh	mình	chat
+tui	tôi	địa phương
+t	tôi|tháng	chat	một chữ: để ngữ cảnh chọn
+nma	nhưng mà	chat
+nhma	nhưng mà	chat
+nhg	nhưng	chat
+nhưg	nhưng	chat
+ng	người	chat
+ngta	người ta	chat
+trc	trước	thời gian
+trk	trước	thời gian
+trưk	trước	thời gian
+thui	thôi	chat
+thoy	thôi	chat
+lun	luôn	chat
+wá	quá	chat
+qá	quá	chat
+wa	qua|quá	chat
+wen	quen	chat
+iu	yêu	chat
+zui	vui	chat
+bh	bây giờ	thời gian
+bgiờ	bây giờ	thời gian
+bjo	bây giờ	thời gian
+bjờ	bây giờ	thời gian
+bi giờ	bây giờ	thời gian
+chừ	bây giờ	địa phương
+hnay	hôm nay	thời gian
+hnây	hôm nay	thời gian
+hôm nai	hôm nay	thời gian
+hqua	hôm qua	thời gian
+hum	hôm	thời gian
+hôm	hôm	thời gian
+bữa	hôm	địa phương	"bữa nay" = hôm nay
+hổm	hôm ấy	địa phương
+th	tháng	thời gian
+thg	tháng	thời gian
+thág	tháng	thời gian
+tháng	tháng	thời gian
+tuầng	tuần	thời gian
+tgian	thời gian	thời gian
+tg	thời gian	thời gian
+nhiu	nhiêu|nhiều	số lượng
+nhìu	nhiều	số lượng
+nhìuu	nhiều	số lượng
+bnhiu	bao nhiêu	số lượng
+bnhieu	bao nhiêu	số lượng
+bn	bao nhiêu|bạn	số lượng
+bnh	bao nhiêu	số lượng
+baonhiu	bao nhiêu	số lượng
+baonhiêu	bao nhiêu	số lượng
+mí	mấy	số lượng
+nhứt	nhất	so sánh
+nhut	nhất	so sánh
+nhất	nhất	so sánh
+hơng	hơn	so sánh
+tb	trung bình	số liệu
+tbình	trung bình	số liệu
+bq	bình quân	số liệu
+tl	tỉ lệ|trả lời	số liệu
+tlệ	tỉ lệ	số liệu
+sl	số lượng	số liệu
+slg	số lượng	số liệu
+slượng	số lượng	số liệu
+dthu	doanh thu	kinh doanh
+dt	doanh thu|điện thoại	kinh doanh
+dtt	doanh thu thuần	kinh doanh
+ds	doanh số|danh sách	kinh doanh
+dso	doanh số	kinh doanh
+ln	lợi nhuận	kinh doanh
+lnhuận	lợi nhuận	kinh doanh
+lời	lời	kinh doanh	lời = lãi
+lãi	lãi	kinh doanh
+vốn	vốn	kinh doanh
+gv	giá vốn	kinh doanh
+sp	sản phẩm	kinh doanh
+sphẩm	sản phẩm	kinh doanh
+mh	mặt hàng	kinh doanh
+mhàng	mặt hàng	kinh doanh
+hag	hàng	kinh doanh
+hàg	hàng	kinh doanh
+đh	đơn hàng	kinh doanh
+dh	đơn hàng	kinh doanh
+đơng	đơn	kinh doanh
+dơn	đơn	kinh doanh
+hđ	hoá đơn|hợp đồng	kinh doanh
+hd	hoá đơn|hợp đồng	kinh doanh
+hdon	hoá đơn	kinh doanh
+khách	khách	kinh doanh
+kách	khách	kinh doanh
+khachs	khách	kinh doanh
+kl	khách lẻ	kinh doanh
+ncc	nhà cung cấp	kinh doanh
+nv	nhân viên	kinh doanh
+nvien	nhân viên	kinh doanh
+ql	quản lý	kinh doanh
+qly	quản lý	kinh doanh
+ctv	cộng tác viên	kinh doanh
+kd	kinh doanh	kinh doanh
+dv	dịch vụ|đơn vị	kinh doanh
+đvt	đơn vị tính	kinh doanh
+dvt	đơn vị tính	kinh doanh
+ck	chuyển khoản	thanh toán
+cknh	chuyển khoản	thanh toán
+tm	tiền mặt	thanh toán
+tt	thanh toán|trạng thái|tổng tiền	thanh toán
+ttoan	thanh toán	thanh toán
+ttien	thành tiền|tổng tiền	thanh toán
+cn	công nợ|chủ nhật	thanh toán
+cnợ	công nợ	thanh toán
+nợ	nợ	thanh toán
+gg	giảm giá	khuyến mãi
+ggiá	giảm giá	khuyến mãi
+km	khuyến mãi	khuyến mãi
+kmãi	khuyến mãi	khuyến mãi
+ck%	chiết khấu	khuyến mãi
+ckhau	chiết khấu	khuyến mãi
+tk	tồn kho|tài khoản	kho
+tkho	tồn kho	kho
+tồng	tồn	kho
+hsd	hạn sử dụng	kho
+nsx	ngày sản xuất	kho
+sđt	số điện thoại	khách
+sdt	số điện thoại	khách
+đt	điện thoại	khách
+tiềng	tiền	tiền
+tìn	tiền	tiền
+tiền	tiền	tiền
+tổg	tổng	tiền
+tog	tổng	tiền
+củ	triệu	tiền	"3 củ" = 3 triệu (sau số đã khoá)
+tr	triệu	tiền
+kủa	của	chat
+kòn	còn	chat
+kái	cái	chat
+kon	con|còn	chat
+cóa	có	chat
+ơi	ơi	chat
+nhé	nhé	chat
+nhen	nhé	địa phương
+nghen	nhé	địa phương
+hen	nhé	địa phương
+nha	nhé|nhà	chat
+ni	này	địa phương
+nì	này	địa phương
+nớ	đó	địa phương
+mô	nào|đâu	địa phương
+răng	sao	địa phương
+rứa	vậy	địa phương
+tê	kia	địa phương
+hỉ	hả	địa phương
+mần	làm	địa phương
+bển	bên đó	địa phương
+cafe	cà phê	món
+cf	cà phê	món
+caphe	cà phê	món
+cfe	cà phê	món
+trà sữa	trà sữa	món
+ts	trà sữa	món
+ok	ok	chat
+oke	ok	chat
+okie	ok	chat
+oki	ok	chat
+xi ô đi	cod	thanh toán
+o đờ	đơn	kinh doanh
+# ======================= MỞ RỘNG (đợt 2) =======================
+# --- tiếng Anh trong câu hỏi bán hàng (từ đã có trong danh sách giữ nguyên như bill/sale/order thì không đưa vào đây)
+total	tổng	tiếng Anh
+revenue	doanh thu	tiếng Anh
+sales	doanh số	tiếng Anh
+profit	lợi nhuận	tiếng Anh
+margin	biên lợi nhuận	tiếng Anh
+cost	giá vốn|chi phí	tiếng Anh
+price	giá	tiếng Anh
+qty	số lượng	tiếng Anh
+quantity	số lượng	tiếng Anh
+customer	khách hàng	tiếng Anh
+customers	khách hàng	tiếng Anh
+staff	nhân viên	tiếng Anh
+employee	nhân viên	tiếng Anh
+stock	tồn kho	tiếng Anh
+inventory	tồn kho	tiếng Anh
+debt	nợ	tiếng Anh
+refund	hoàn tiền	tiếng Anh
+cancel	huỷ	tiếng Anh
+cancelled	huỷ	tiếng Anh
+canceled	huỷ	tiếng Anh
+return	trả hàng	tiếng Anh
+returned	trả hàng	tiếng Anh
+delivered	đã giao	tiếng Anh
+delivering	đang giao	tiếng Anh
+pending	đang chờ	tiếng Anh
+discount	giảm giá	tiếng Anh
+average	trung bình	tiếng Anh
+avg	trung bình	tiếng Anh
+growth	tăng trưởng	tiếng Anh
+month	tháng	tiếng Anh
+week	tuần	tiếng Anh
+year	năm	tiếng Anh
+today	hôm nay	tiếng Anh
+yesterday	hôm qua	tiếng Anh
+weekend	cuối tuần	tiếng Anh
+product	sản phẩm	tiếng Anh
+products	sản phẩm	tiếng Anh
+item	mặt hàng	tiếng Anh
+items	mặt hàng	tiếng Anh
+category	nhóm hàng	tiếng Anh
+supplier	nhà cung cấp	tiếng Anh
+import	nhập hàng	tiếng Anh
+export	xuất hàng	tiếng Anh
+payment	thanh toán	tiếng Anh
+cash	tiền mặt	tiếng Anh
+transfer	chuyển khoản	tiếng Anh
+invoice	hoá đơn	tiếng Anh
+receipt	phiếu thu	tiếng Anh
+shift	ca	tiếng Anh
+member	thành viên	tiếng Anh
+rank	xếp hạng	tiếng Anh
+percent	phần trăm	tiếng Anh
+tks	cảm ơn	tiếng Anh
+thks	cảm ơn	tiếng Anh
+thanks	cảm ơn	tiếng Anh
+thank	cảm ơn	tiếng Anh
+thx	cảm ơn	tiếng Anh
+pls	làm ơn	tiếng Anh
+plz	làm ơn	tiếng Anh
+ib	nhắn tin	tiếng Anh
+inbox	nhắn tin	tiếng Anh
+rep	trả lời	tiếng Anh
+onl	online	tiếng Anh
+ad	quản trị viên	tiếng Anh
+admin	quản trị viên	tiếng Anh
+# --- viết tắt kinh doanh / kế toán
+dtu	doanh thu	kinh doanh
+dthuu	doanh thu	kinh doanh
+d.thu	doanh thu	kinh doanh
+doanhthu	doanh thu	kinh doanh
+dsố	doanh số	kinh doanh
+lnhuan	lợi nhuận	kinh doanh
+loinhuan	lợi nhuận	kinh doanh
+lgộp	lãi gộp	kinh doanh
+gvon	giá vốn	kinh doanh
+giavon	giá vốn	kinh doanh
+gvhb	giá vốn hàng bán	kinh doanh
+gtri	giá trị	kinh doanh
+gtrị	giá trị	kinh doanh
+gt	giá trị	kinh doanh
+gtb	giá trung bình	kinh doanh
+gb	giá bán	kinh doanh
+gban	giá bán	kinh doanh
+gn	giá nhập	kinh doanh
+gnhap	giá nhập	kinh doanh
+dg	đơn giá|đang	kinh doanh
+đg	đơn giá|đang	kinh doanh
+đgiá	đơn giá	kinh doanh
+dgia	đơn giá	kinh doanh
+tc	tổng cộng	kinh doanh
+tcong	tổng cộng	kinh doanh
+tcộng	tổng cộng	kinh doanh
+tsl	tổng số lượng	kinh doanh
+tsố	tổng số	kinh doanh
+tso	tổng số	kinh doanh
+tổngg	tổng	kinh doanh
+tbinh	trung bình	kinh doanh
+trbinh	trung bình	kinh doanh
+bquan	bình quân	kinh doanh
+bquân	bình quân	kinh doanh
+tle	tỉ lệ	kinh doanh
+tyle	tỉ lệ	kinh doanh
+tile	tỉ lệ	kinh doanh
+pt	phần trăm|phiếu thu	kinh doanh
+ptram	phần trăm	kinh doanh
+ptrăm	phần trăm	kinh doanh
+phantram	phần trăm	kinh doanh
+pc	phiếu chi	kế toán
+pn	phiếu nhập	kế toán
+px	phiếu xuất	kế toán
+nk	nhập kho	kế toán
+xk	xuất kho	kế toán
+tđk	tồn đầu kỳ	kế toán
+tck	tồn cuối kỳ	kế toán
+đky	đầu kỳ	kế toán
+cky	cuối kỳ	kế toán
+gtgt	giá trị gia tăng	kế toán
+hđđt	hoá đơn điện tử	kế toán
+hddt	hoá đơn điện tử	kế toán
+stk	số tài khoản	kế toán
+tkhoan	tài khoản	kế toán
+congno	công nợ	kế toán
+nophai	nợ phải	kế toán
+nợpt	nợ phải thu	kế toán
+npt	nợ phải thu	kế toán
+dhang	đơn hàng	kinh doanh
+đhang	đơn hàng	kinh doanh
+donhang	đơn hàng	kinh doanh
+đhàng	đơn hàng	kinh doanh
+hoadon	hoá đơn	kinh doanh
+hđơn	hoá đơn	kinh doanh
+mhang	mặt hàng	kinh doanh
+mathang	mặt hàng	kinh doanh
+spham	sản phẩm	kinh doanh
+sanpham	sản phẩm	kinh doanh
+sfẩm	sản phẩm	kinh doanh
+nhomhang	nhóm hàng	kinh doanh
+nhóm hag	nhóm hàng	kinh doanh
+khang	khách hàng	kinh doanh
+khhang	khách hàng	kinh doanh
+khachhang	khách hàng	kinh doanh
+khàng	khách hàng	kinh doanh
+kvl	khách vãng lai	kinh doanh
+khle	khách lẻ	kinh doanh
+khlẻ	khách lẻ	kinh doanh
+kle	khách lẻ	kinh doanh
+tv	thành viên	kinh doanh
+tvien	thành viên	kinh doanh
+nvbh	nhân viên bán hàng	kinh doanh
+nvkd	nhân viên kinh doanh	kinh doanh
+nhanvien	nhân viên	kinh doanh
+nviên	nhân viên	kinh doanh
+qlý	quản lý	kinh doanh
+quanly	quản lý	kinh doanh
+nhacc	nhà cung cấp	kinh doanh
+ncấp	nhà cung cấp	kinh doanh
+ch	cửa hàng	kinh doanh
+chàng	cửa hàng	kinh doanh
+cuahang	cửa hàng	kinh doanh
+cửahàng	cửa hàng	kinh doanh
+tonkho	tồn kho	kho
+tồnkho	tồn kho	kho
+tồn kh	tồn kho	kho
+nhaphang	nhập hàng	kho
+nhậphàng	nhập hàng	kho
+nhập hag	nhập hàng	kho
+xuathang	xuất hàng	kho
+hsdung	hạn sử dụng	kho
+hạnsd	hạn sử dụng	kho
+hết hsd	hết hạn sử dụng	kho
+soluong	số lượng	kho
+sốlượng	số lượng	kho
+sluong	số lượng	kho
+đvị	đơn vị	kho
+đ.vị	đơn vị	kho
+donvi	đơn vị	kho
+đvtính	đơn vị tính	kho
+quydoi	quy đổi	kho
+qđổi	quy đổi	kho
+qd	quy đổi	kho
+ttoán	thanh toán	thanh toán
+thtoan	thanh toán	thanh toán
+thanhtoan	thanh toán	thanh toán
+cknhan	chuyển khoản	thanh toán
+chuyenkhoan	chuyển khoản	thanh toán
+tmat	tiền mặt	thanh toán
+tienmat	tiền mặt	thanh toán
+ghino	ghi nợ	thanh toán
+trano	trả nợ	thanh toán
+thuno	thu nợ	thanh toán
+conno	còn nợ	thanh toán
+ggia	giảm giá	khuyến mãi
+giamgia	giảm giá	khuyến mãi
+kmai	khuyến mãi	khuyến mãi
+khuyenmai	khuyến mãi	khuyến mãi
+ckhấu	chiết khấu	khuyến mãi
+chietkhau	chiết khấu	khuyến mãi
+vc	voucher|vận chuyển	khuyến mãi
+pship	phí ship	thanh toán
+phíship	phí ship	thanh toán
+pgiao	phí giao	thanh toán
+pvụ	phục vụ	thanh toán
+ppv	phí phục vụ	thanh toán
+tmđt	thương mại điện tử	kênh
+tmdt	thương mại điện tử	kênh
+sàn	sàn	kênh
+tgdd	thế giới di động	kênh
+# --- thời gian
+hnao	hôm nào	thời gian
+hôm nao	hôm nào	thời gian
+hqa	hôm qua	thời gian
+hwa	hôm qua	thời gian
+hômqua	hôm qua	thời gian
+hômnay	hôm nay	thời gian
+homnay	hôm nay	thời gian
+homqua	hôm qua	thời gian
+hum nay	hôm nay	thời gian
+hum qua	hôm qua	thời gian
+bữa nay	hôm nay	thời gian
+bữa qua	hôm qua	thời gian
+bữa giờ	mấy hôm nay	thời gian
+hồi nãy	lúc nãy	thời gian
+thangtruoc	tháng trước	thời gian
+thángtrước	tháng trước	thời gian
+thangnay	tháng này	thời gian
+thángnày	tháng này	thời gian
+thág trc	tháng trước	thời gian
+tuantruoc	tuần trước	thời gian
+tuannay	tuần này	thời gian
+namngoai	năm ngoái	thời gian
+nămngoái	năm ngoái	thời gian
+năm ngoai	năm ngoái	thời gian
+namnay	năm nay	thời gian
+năm trc	năm trước	thời gian
+quýtrước	quý trước	thời gian
+quytruoc	quý trước	thời gian
+đầu th	đầu tháng	thời gian
+cuối th	cuối tháng	thời gian
+dau thang	đầu tháng	thời gian
+cuoi thang	cuối tháng	thời gian
+cuối tuầng	cuối tuần	thời gian
+ctuần	cuối tuần	thời gian
+tgần	gần đây	thời gian
+gần đâyy	gần đây	thời gian
+ngàyy	ngày	thời gian
+ngáy	ngày	thời gian
+# --- số / tiền lóng
+tỏi	tỷ	tiền
+chịc	chục	tiền
+# --- phủ định / hỏi / đuôi câu
+k0	không	phủ định
+ko0	không	phủ định
+hôn	không	phủ định
+hơm	không	phủ định
+hăm	không	phủ định
+khôngg	không	phủ định
+kbt	không biết	chat
+kb	không biết	chat
+k bít	không biết	chat
+kbiet	không biết	chat
+kbiết	không biết	chat
+bth	bình thường	chat
+bthg	bình thường	chat
+bthường	bình thường	chat
+vd	ví dụ	chat
+vdu	ví dụ	chat
+cmt	bình luận	chat
+nt	nhắn tin	chat
+ntin	nhắn tin	chat
+sđth	số điện thoại	chat
+đth	điện thoại	chat
+dthoai	điện thoại	chat
+đthoại	điện thoại	chat
+ae	anh em	chat
+ace	anh chị em	chat
+ckj	chị	chat
+cj	chị	chat
+vk	vợ	chat
+bme	bố mẹ	chat
+mjh	mình	chat
+mìh	mình	chat
+mìk	mình	chat
+mih	mình	chat
+bạnn	bạn	chat
+bnn	bao nhiêu	số lượng
+bnhiêu	bao nhiêu	số lượng
+bnhieuu	bao nhiêu	số lượng
+baonhieu	bao nhiêu	số lượng
+bao nhieu	bao nhiêu	số lượng
+bao nhiu	bao nhiêu	số lượng
+bao nhjêu	bao nhiêu	số lượng
+bnhjêu	bao nhiêu	số lượng
+nhjêu	nhiêu	số lượng
+nhju	nhiều	số lượng
+nhìeu	nhiều	số lượng
+nhiềuu	nhiều	số lượng
+hơnn	hơn	so sánh
+nhấtt	nhất	so sánh
+nhatt	nhất	so sánh
+nhứtt	nhất	so sánh
+nhút	nhất	so sánh
+cao nhứt	cao nhất	so sánh
+ít nhứt	ít nhất	so sánh
+sovoi	so với	so sánh
+so vs	so với	so sánh
+ss	so sánh	so sánh
+ssánh	so sánh	so sánh
+chênhh	chênh	so sánh
+tăg	tăng	so sánh
+tag	tăng	so sánh
+giảmm	giảm	so sánh
+gỉam	giảm	so sánh
+# --- chat chung
+dzay	vậy	chat
+dza	vậy	chat
+zầy	vậy	chat
+vầy	vậy	địa phương
+z ạ	vậy ạ	chat
+dzị	vậy	chat
+nhoa	nha	chat
+nhaa	nha	chat
+ạk	ạ	chat
+ak	à	chat
+ah	à	chat
+uhm	ừ	chat
+uh	ừ	chat
+um	ừ	chat
+ừm	ừ	chat
+okê	ok	chat
+oce	ok	chat
+okela	ok	chat
+oklm	ok	chat
+cảm ơn	cảm ơn	chat
+camon	cảm ơn	chat
+cám ơn	cảm ơn	chat
+cmon	cảm ơn	chat
+cảmơn	cảm ơn	chat
+xem gium	xem giùm	chat
+coi gium	coi giùm	chat
+giùmm	giùm	chat
+giúpp	giúp	chat
+dùm	giùm	chat
+jùm	giùm	chat
+jum	giùm	chat
+jup	giúp	chat
+júp	giúp	chat
+hỏii	hỏi	chat
+chohoi	cho hỏi	chat
+chhoi	cho hỏi	chat
+cho hoi	cho hỏi	chat
+tínhh	tính	chat
+tíh	tính	chat
+tih	tính	chat
+bík	biết	chat
+bjết	biết	chat
+biêt	biết	chat
+nào	nào	chat
+nàoo	nào	chat
+nèo	nào	chat
+nàu	nào	chat
+naò	nào	chat
+cái nao	cái nào	chat
+j vậy	gì vậy	chat
+j z	gì vậy	chat
+là j	là gì	chat
+lắmm	lắm	chat
+wá trời	quá trời	chat
+qtrời	quá trời	chat
+lun á	luôn á	chat
+lúm	lắm	chat
+nhìu lắm	nhiều lắm	chat
+# --- địa phương (không đưa vào: chi, qua, biểu, kêu… vì là từ thật thường gặp)
+hổng có	không có	địa phương
+hông có	không có	địa phương
+hông biết	không biết	địa phương
+thiệt	thật	địa phương
+dị nè	vậy này	địa phương
+nè	này	địa phương
+vầy nè	vậy này	địa phương
+ri	thế này	địa phương
+rứa hè	vậy hả	địa phương
+mô rứa	đâu vậy	địa phương
+răng rứa	sao vậy	địa phương
+chi rứa	gì vậy	địa phương
+tụi	bọn	địa phương
+mầy	mày	địa phương
+bểnh	bên đó	địa phương
+đằng	đằng	địa phương
+hông hà	không à	địa phương
+# --- món / hàng hay viết tắt
+tsua	trà sữa	món
+trasua	trà sữa	món
+cfs	cà phê sữa	món
+cfd	cà phê đen	món
+cf sữa	cà phê sữa	món
+cf đen	cà phê đen	món
+capheden	cà phê đen	món
+caphesua	cà phê sữa	món
+bm	bánh mì	món
+banhmi	bánh mì	món
+nc	nước	món
+nướcc	nước	món
+sting	sting	món
+pepsi	pepsi	món
+vlxd	vật liệu xây dựng	ngành
+xm	xi măng	ngành
+ximang	xi măng	ngành
+tpcn	thực phẩm chức năng	ngành
+thuốc kđ	thuốc kê đơn	ngành
+kđ	kê đơn	ngành
+otc	không kê đơn	ngành

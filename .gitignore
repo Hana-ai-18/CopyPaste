@@ -1,30 +1,33 @@
-# competition data must NOT be redistributed (rules) - never commit it
-train/
-public_test/
-private_test/
+# ---- KHÔNG BAO GIỜ đẩy lên repo ----
+# dữ liệu cuộc thi (giấy phép BTC) và mọi đáp án
 data/
-demo_split/
 *.zip
-*.parquet
-*.sqlite
-*.xlsx
-
-# exemplar bank = train questions + code: do not publish (rebuild it with scripts/build_exemplars.py)
-exemplars/*.jsonl
-!exemplars/seed_exemplars.jsonl
-
-# models and outputs
-models/*
-!models/.gitkeep
+**/train/
+**/public_test/
+**/private_test/
+answers*.jsonl
+submission*.jsonl
+*.jsonl
+# lexicon/spec_bank.jsonl chứa CÂU HỎI TRAIN (dữ liệu BTC) -> KHÔNG đẩy lên git.
+# Dựng tại máy build: python scripts/build_spec_bank.py --train <train> ; Docker COPY lấy từ thư mục làm việc (xem .dockerignore)
+# kết quả chạy, cache, log
+out*/
+outputs/
+cache/
 result/
-out/
+logs/
+*.pkl
+llm_cache*
+# model weights
+models/weights/
 *.safetensors
-*.gguf
 *.bin
-
-# python
+*.gguf
+# python / notebook
 __pycache__/
 *.pyc
-.pytest_cache/
 .ipynb_checkpoints/
 .venv/
+.env
+.DS_Store
+models/

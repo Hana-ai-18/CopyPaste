@@ -1,0 +1,1265 @@
+# Bảng lỗi / nhầm lẫn của DataMate (danh mục dùng chung cho cả nhóm).
+# Dùng cho: kiểm toán (giải thích vì sao hai đường lệch), gắn nhãn câu sai trên TRAIN, viết luật kiểm.
+# Mỗi mục:
+#   id         mã duy nhất (H = hiểu câu, D = dữ liệu, T = tính toán, F = định dạng, C = câu chữ, Q = quyết định)
+#   ten        tên ngắn
+#   dau_hieu   chữ/mẫu trong câu hoặc dữ liệu cho thấy có thể gặp lỗi (regex, không dấu, chữ thường)
+#   tai_tao    phép biến đổi để tái tạo đáp án sai từ đáp án đúng (kiểm toán dùng để giải thích con số lệch)
+#   luat       luật rulebook phân xử (tên mục; số mục có thể khác ở rulebook private)
+#   chan       cách chặn trong pipeline
+#   trang_thai da_code | thiet_ke
+# Thêm mục mới khi kiểm toán train gặp loại sai "chưa rõ": một mục, kèm ví dụ train (không dùng câu public/private).
+#   nguon      rulebook (suy từ luật) | train (gặp khi soát train) | chung (lỗi phổ biến của code/LLM/dữ liệu) | quy_dinh (luật cuộc thi)
+
+hieu_cau:
+- id: H01
+  ten: Đảo chiều so sánh (kỳ hỏi ↔ kỳ gốc)
+  dau_hieu: so voi|so vs|so sanh|hon|kem|tang|giam|chenh
+  tai_tao: swap(target, base)
+  luat: '§1: chênh lệch = kỳ hỏi − kỳ so; % thay đổi so với kỳ trước; vế sau ''so với'' là mốc'
+  chan: luật chọn nghĩa + kiểm toán K2/K4; dấu kết quả khớp phép so
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H02
+  ten: Quý đọc thành tháng (Q1 → tháng 1)
+  dau_hieu: \bq ?[1-4]\b|quy ?[1-4]|\bth ?[1-9]
+  tai_tao: period(quy_q -> thang_q)
+  luat: '§2: quý theo dương lịch, mỗi quý 3 tháng'
+  chan: resolve_periods có quy_q_y; luật chọn nghĩa; kiểm hợp lý số đơn quý > tháng
+  trang_thai: da_code
+  nguon: rulebook
+- id: H03
+  ten: Bỏ một vế của câu nhiều điều kiện
+  dau_hieu: \bva\b|\broi\b|lien tuc|ca hai|dong thoi|deu
+  tai_tao: drop_condition(k)
+  luat: mọi vế nối bằng 'và' đều bắt buộc
+  chan: đặc tả liệt kê từng vế có span; kiểm toán M8
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H04
+  ten: Không quy đổi đơn vị (hộp ↔ cái, thùng ↔ lon)
+  dau_hieu: hop|thung|loc|vi|cai|lon|chai|goi|bao|kg|tan|m3
+  tai_tao: no_unit_conversion
+  luat: '§3/§5: số lượng quy về đơn vị cơ bản; câu nêu đơn vị thì theo đơn vị đó'
+  chan: tách số lượng/đơn vị khi đọc; metamorphic M3; RuleTests
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H05
+  ten: Tính nhầm đơn huỷ / đơn trả (kể cả trả một phần) vào doanh thu
+  dau_hieu: doanh thu|ban duoc|thu ve|so don
+  tai_tao: include(status in [huy, tra_hang])
+  luat: '§1: bỏ đơn huỷ và cả đơn có trả hàng; đơn đang giao vẫn tính'
+  chan: APPLY_RULE tự chèn theo measure; metamorphic M1/M2
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H06
+  ten: Khớp tên quá rộng / quá hẹp (một SKU hay mọi biến thể)
+  dau_hieu: ten hang co nhieu bien the (size, quy cach)
+  tai_tao: entity_scope(narrow <-> broad)
+  luat: '§8: tên gọi khác nhau của cùng một thứ là cùng một thứ; file có mã thì theo mã'
+  chan: chỉ mục giá trị trả MỌI ứng viên; cấm str.contains chuỗi ngắn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H07
+  ten: Năm của kỳ không ghi năm
+  dau_hieu: thang \d{1,2}(?!/)|quy \d(?!/)
+  tai_tao: year(this <-> last)
+  luat: '§2: năm nay nếu không sau hôm nay; sau hôm nay thì năm trước'
+  chan: resolve_periods
+  trang_thai: da_code
+  nguon: rulebook
+- id: H08
+  ten: '"Tháng trước" tính theo hôm nay hay theo kỳ được hỏi'
+  dau_hieu: thang truoc|ky truoc|cung ky
+  tai_tao: anchor(as_of <-> asked_period)
+  luat: §2
+  chan: luật chọn nghĩa
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H09
+  ten: '"Tháng này so với tháng trước" không lấy cùng số ngày'
+  dau_hieu: thang nay.*(so|hon|tang|giam)
+  tai_tao: base_period(full_month <-> same_days)
+  luat: '§2: tháng trước lấy cùng số ngày; tháng ngắn thì đến hết tháng'
+  chan: P['thang_truoc_cung_ky']
+  trang_thai: da_code
+  nguon: rulebook
+- id: H10
+  ten: Tuần bắt đầu sai (Chủ nhật thay vì thứ Hai); tuần này lấy cả tuần
+  dau_hieu: tuan nay|tuan truoc|tuan roi
+  tai_tao: week_start(mon <-> sun) | week_end(today <-> sunday)
+  luat: '§2: tuần bắt đầu thứ Hai; tuần này đến hết hôm nay; tuần trước cả tuần'
+  chan: resolve_periods; metamorphic M5 (biên kỳ)
+  trang_thai: da_code
+  nguon: rulebook
+- id: H11
+  ten: Biên ngưỡng ≥ và >
+  dau_hieu: tro len|it nhat|toi thieu|hon|qua|tren|duoi
+  tai_tao: threshold(ge <-> gt)
+  luat: '§2: quá/hơn/trên/dưới không gồm N; từ N trở lên gồm N'
+  chan: cảnh báo trong prompt; luật chọn nghĩa
+  trang_thai: da_code
+  nguon: rulebook
+- id: H12
+  ten: Phát sinh trong kỳ hay số còn lại đến hết ngày
+  dau_hieu: con no|con ton|con lai|den het|tinh den
+  tai_tao: flow <-> stock
+  luat: '§2: ''đến hết ngày X'' = tình trạng lúc hết ngày, tính từ đầu dữ liệu'
+  chan: luật chọn nghĩa
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H13
+  ten: Mẫu số của trung bình (mỗi đơn / ngày / khách / ngày có bán)
+  dau_hieu: trung binh|binh quan|moi (don|ngay|khach)
+  tai_tao: denominator(k)
+  luat: chữ sau 'mỗi' quyết định mẫu số
+  chan: metric chuẩn có mẫu số cố định
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H14
+  ten: Thứ hạng cụ thể (nhì / thứ k) hay top-k
+  dau_hieu: nhi\b|thu hai|thu \d|top \d
+  tai_tao: rank(k-th <-> top-k)
+  luat: '''thứ k'' là một phần tử; ''top k'' là danh sách'
+  chan: đặc tả output.type
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H15
+  ten: Mẫu số tỉ trọng (cả shop hay trong nhóm)
+  dau_hieu: chiem|ti trong|phan tram
+  tai_tao: share_base(shop <-> group)
+  luat: '§1: tỉ trọng nhóm chia doanh thu cả shop (gồm khách vãng lai, phí phục vụ)'
+  chan: metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H16
+  ten: '"Ai" là khách hay nhân viên'
+  dau_hieu: \bai\b|nguoi nao
+  tai_tao: who(customer <-> staff)
+  luat: nhân viên/NV/bán giỏi/đứng ca → nhân viên; còn lại → khách
+  chan: luật chọn nghĩa
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H17
+  ten: Tiêu chí xếp hạng sai (số dòng / số tiền thay vì số lượng quy đổi)
+  dau_hieu: ban chay|nhieu nhat|it nhat|loi nhat
+  tai_tao: rank_by(qty_base <-> lines <-> revenue)
+  luat: '§3: bán chạy theo số lượng quy về đơn vị cơ bản; lời nhất theo lãi gộp; NV giỏi theo doanh thu'
+  chan: metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H18
+  ten: Hoà hạng không xếp theo mã tăng dần
+  dau_hieu: nhat|top|xep hang
+  tai_tao: tie_break(code_asc <-> other)
+  luat: bằng nhau xếp theo mã tăng dần
+  chan: RANK(tie=code asc) trong trình biên dịch; RuleTests
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H19
+  ten: Khách lẻ / vãng lai bị đếm hoặc xếp hạng
+  dau_hieu: khach|so khach|khach nao
+  tai_tao: include(walk_in)
+  luat: '§3: khách lẻ không phải khách; §4: vẫn tính vào tổng nợ'
+  chan: cờ is_walkin; metamorphic M6
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H20
+  ten: COD / sàn TMĐT bị tính là khách nợ
+  dau_hieu: no|cong no|tuoi no
+  tai_tao: include(channel in [cod, san])
+  luat: §4
+  chan: RuleTests; metamorphic M6
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H21
+  ten: Tuổi nợ tính từ hạn thanh toán thay vì ngày đặt
+  dau_hieu: tuoi no|qua han|no lau
+  tai_tao: age_from(order_date <-> due_date)
+  luat: '§4: từ ngày đặt; đặt hôm nay = 0 ngày'
+  chan: metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H22
+  ten: Tết / ca sáng-chiều tính sai khoảng
+  dau_hieu: tet|ca sang|ca chieu
+  tai_tao: window(shift)
+  luat: '§2: Tết = 23 Chạp → mùng 10 Giêng; ca sáng 06:00–13:59, ca chiều 14:00–21:59'
+  chan: tet_window từ calendar.csv
+  trang_thai: da_code
+  nguon: rulebook
+- id: H23
+  ten: '"Bán được bao nhiêu tiền" hiểu là tiền khách đã trả'
+  dau_hieu: ban duoc bao nhieu tien|thu ve
+  tai_tao: revenue <-> paid
+  luat: '§1: là doanh thu, không phải tiền đã trả'
+  chan: metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+du_lieu:
+- id: D01
+  ten: Ô trống ở dòng tiếp nối của nhóm dòng không được điền
+  dau_hieu: cột mã đơn trống ở các dòng sau, các cột cấp-đơn trống cùng chỗ
+  tai_tao: drop_group_fill
+  luat: '§8: ô trống ở dòng sau của nhóm dòng giống dòng đầu nhóm'
+  chan: fill_row_groups khi đọc dữ liệu
+  trang_thai: da_code
+  nguon: rulebook
+- id: D02
+  ten: Bỏ trùng ở bảng không ghi theo đơn
+  dau_hieu: bảng không có cột mã đơn, có dòng giống hệt nhau
+  tai_tao: dedupe_all
+  luat: '§8: bảng không ghi theo đơn, hai dòng giống nhau vẫn tính cả hai'
+  chan: drop_same_order_duplicates chỉ khi có mã đơn; prompt cấm tự bỏ trùng
+  trang_thai: da_code
+  nguon: rulebook
+- id: D03
+  ten: Không bỏ dòng trùng của cùng một đơn
+  dau_hieu: hai dòng cùng mã đơn giống mọi ô
+  tai_tao: keep_duplicates
+  luat: '§8: lỗi xuất file, tính một lần'
+  chan: drop_same_order_duplicates
+  trang_thai: da_code
+  nguon: rulebook
+- id: D04
+  ten: Cột số lượng lẫn '3 chai' và '3'
+  dau_hieu: cột số lượng một phần có chữ đơn vị
+  tai_tao: qty_as_text
+  luat: '-'
+  chan: type_columns tách số + cột __dv
+  trang_thai: da_code
+  nguon: rulebook
+- id: D05
+  ten: Dòng Tổng/Cộng hoặc header lặp lọt vào số liệu
+  dau_hieu: ^(tong|cong|total)
+  tai_tao: include_total_rows
+  luat: '-'
+  chan: clean_table
+  trang_thai: da_code
+  nguon: rulebook
+- id: D06
+  ten: Mã có khoảng trắng làm nối bảng hụt
+  dau_hieu: mã có dấu cách đầu/cuối hoặc giữa
+  tai_tao: no_strip
+  luat: '-'
+  chan: strip mã khi đọc
+  trang_thai: da_code
+  nguon: rulebook
+- id: D07
+  ten: Sót giá trị trạng thái hiếm (chỉ có vài tháng)
+  dau_hieu: giá trị trạng thái xuất hiện < 1%
+  tai_tao: drop_rare_status
+  luat: '§8: mỗi đơn đúng một trong bốn trạng thái'
+  chan: ánh xạ MỌI giá trị trạng thái; audit D6
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: D08
+  ten: Dấu . , hoặc ngày/tháng đọc sai
+  dau_hieu: 1.234 / 1,234; 03/04 vs 04/03
+  tai_tao: swap_thousands | swap_dayfirst
+  luat: README của shop
+  chan: decide_thousands, decide_dayfirst theo cả cột
+  trang_thai: da_code
+  nguon: rulebook
+- id: D09
+  ten: Tiền viết tắt '1tr380', '250k', '(250k)'
+  dau_hieu: tr\d|k$|\(.*\)
+  tai_tao: parse_money_naive
+  luat: '-'
+  chan: parse_money_one
+  trang_thai: da_code
+  nguon: rulebook
+- id: D10
+  ten: Ngày không ghi năm
+  dau_hieu: dd/mm không năm
+  tai_tao: year_from_today
+  luat: '§8: năm của sheet chứa dòng đó'
+  chan: year_hint từ tên sheet/file
+  trang_thai: da_code
+  nguon: rulebook
+- id: D11
+  ten: Lấy nhầm ngày giao / ngày thu làm ngày đơn
+  dau_hieu: bảng có nhiều cột ngày
+  tai_tao: date_col(order <-> delivery <-> payment)
+  luat: '§1: theo ngày đặt'
+  chan: README + thẻ dữ liệu; cấu hình shop
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: D12
+  ten: Gộp nhầm khách khác tên ('Lan' / 'Lân') hoặc tách nhầm cùng tên khác cách viết
+  dau_hieu: tên khách gần giống
+  tai_tao: merge_customers(fuzzy) | split_customers(case)
+  luat: '§3: có mã thì theo mã; không mã thì tên chỉ khác cách viết là cùng khách, khác chữ là khác khách'
+  chan: key() (hoa thường, dấu cách); không gộp mờ
+  trang_thai: da_code
+  nguon: rulebook
+- id: D13
+  ten: Phí phục vụ / topping được xếp hạng như món
+  dau_hieu: phi phuc vu|topping|size
+  tai_tao: include_service_fee_in_rank
+  luat: '§3: phí phục vụ không phải mặt hàng nhưng vẫn tính doanh thu'
+  chan: cờ is_service_fee
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: D14
+  ten: Bảng tổng hợp bị cộng chung với bảng giao dịch
+  dau_hieu: bảng báo cáo theo tháng cạnh sổ chi tiết
+  tai_tao: double_count
+  luat: '-'
+  chan: phân loại bảng giao dịch / tổng hợp
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: D15
+  ten: Các file cùng cấu trúc nhưng khác định dạng khi gộp
+  dau_hieu: kiểu cột 'hỗn hợp' sau khi gộp
+  tai_tao: mixed_types
+  luat: '-'
+  chan: merge_same_structure ghi 'hỗn hợp'; audit D8
+  trang_thai: da_code
+  nguon: rulebook
+tinh_toan:
+- id: T01
+  ten: Làm tròn sai (số thực, không HALF_UP)
+  dau_hieu: phan tram|trung binh|ti le
+  tai_tao: round_half_even
+  luat: '§3/§9: nửa đồng làm tròn lên; % 2 chữ số'
+  chan: rhu(), pct()
+  trang_thai: da_code
+  nguon: rulebook
+- id: T02
+  ten: Mẫu số tỉ lệ huỷ chỉ gồm đơn hợp lệ
+  dau_hieu: ti le huy
+  tai_tao: denominator(valid_orders)
+  luat: '§1: mẫu số là mọi đơn đặt trong kỳ, mọi trạng thái'
+  chan: metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: T03
+  ten: Giảm giá cả đơn bị trừ vào doanh thu
+  dau_hieu: doanh thu
+  tai_tao: subtract_order_discount
+  luat: '§1: chỉ trừ giảm giá trên từng dòng'
+  chan: metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: T04
+  ten: Dấu của tăng trưởng sai
+  dau_hieu: tang|giam|thay doi
+  tai_tao: abs(result)
+  luat: '§1: giảm ra số âm'
+  chan: 'kiểm hợp lý: dấu khớp A > B'
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: T05
+  ten: Mặt hàng không có giao dịch trả unanswerable thay vì 0
+  dau_hieu: ban duoc bao nhieu
+  tai_tao: zero -> unanswerable
+  luat: '§7: chỉ không trả lời được khi kỳ ngoài dữ liệu hoặc shop không ghi loại thông tin'
+  chan: luật 'không trả lời được' (v3 5.4)
+  trang_thai: thiet_ke
+  nguon: rulebook
+dinh_dang:
+- id: F01
+  ten: Phần trăm ghi dạng 0.124
+  tai_tao: pct/100
+  luat: '§9: 12,4 % ghi 12.4'
+  chan: format_answer + prompt
+  trang_thai: da_code
+  nguon: rulebook
+- id: F02
+  ten: Số ghi dạng chuỗi / có đơn vị / có dấu nghìn
+  tai_tao: str(number)
+  luat: §9
+  chan: format_answer
+  trang_thai: da_code
+  nguon: rulebook
+- id: F03
+  ten: Câu theo tháng nhưng trả ngày (hoặc ngược lại)
+  tai_tao: date_granularity
+  luat: '§9: theo tháng thì YYYY-MM'
+  chan: format_answer + đặc tả output
+  trang_thai: da_code
+  nguon: rulebook
+- id: F04
+  ten: List một phần tử bị trả thành chuỗi; thứ tự list sai
+  tai_tao: list->str | reorder
+  luat: '§9: câu nhiều số ghi list theo đúng thứ tự câu hỏi'
+  chan: format_answer + đặc tả output
+  trang_thai: da_code
+  nguon: rulebook
+- id: F05
+  ten: Tên trả về không lấy nguyên từ dữ liệu (thêm nhãn, đổi cách viết)
+  tai_tao: decorate_name
+  luat: '§9: tên lấy nguyên từ dữ liệu'
+  chan: lấy tên từ bảng, không từ câu đã chuẩn hoá
+  trang_thai: thiet_ke
+  nguon: rulebook
+cau_chu:
+- id: C01
+  ten: Từ thật bị khoá nhầm thành tên hàng ('hôm qua' → 'quả')
+  tai_tao: protect_short_unaccented_term
+  chan: chỉ khớp bỏ dấu khi người hỏi không gõ dấu và tên ≥ 5 ký tự
+  trang_thai: da_code
+  nguon: train
+- id: C02
+  ten: Chữ tiếng Anh bị thêm dấu ('bill' → 'bị', 'best' → 'bét')
+  tai_tao: telex_on_english
+  chan: danh sách ENGLISH giữ nguyên
+  trang_thai: da_code
+  nguon: train
+- id: C03
+  ten: Cắt đuôi chữ kéo dài rồi tra teencode ra nghĩa lạ ('thuuu' → 'tháng')
+  tai_tao: trim_then_teen
+  chan: không tra teencode sau khi cắt đuôi
+  trang_thai: da_code
+  nguon: train
+- id: C04
+  ten: Câu đúng có dấu bị sửa nhầm ('do' → 'đó', 'Long' → 'lon')
+  tai_tao: over_correction
+  chan: chế độ cẩn thận cho câu ≥ 50% chữ có dấu; đo bằng kiểu 'sach' trong eval_normalize
+  trang_thai: da_code
+  nguon: train
+- id: C05
+  ten: Teencode nhiều nghĩa ('bn', 'k', 'dt', 'tt', 'cn')
+  tai_tao: wrong_sense
+  chan: lexicon/teencode.tsv nhiều nghĩa + ngữ cảnh 3-gram
+  trang_thai: da_code
+  nguon: train
+- id: C06
+  ten: '"k" sau số là nghìn, không phải "không"'
+  tai_tao: k_as_negation
+  chan: khoá số + đơn vị tiền trước khi sửa chữ
+  trang_thai: da_code
+  nguon: train
+- id: C07
+  ten: Chữ số trong câu bị đổi khi sửa chữ
+  tai_tao: digits_changed
+  chan: audit Q1; số/ngày được khoá
+  trang_thai: da_code
+  nguon: train
+- id: C08
+  ten: Gõ VNI ('tie6n2'), viết kiểu teen chưa có trong bảng ('jờ', 'thík'), lẫn vùng miền ('nàm', 'chường')
+  tai_tao: ood_spelling
+  chan: vni_decode, teen_variants, region_variants + mô hình ngôn ngữ chọn
+  trang_thai: da_code
+  nguon: train
+- id: C09
+  ten: Từ gõ hỏng trong câu train bị học thành từ chuẩn ('hangf')
+  tai_tao: learn_noise
+  chan: mô hình ngôn ngữ chỉ học âm tiết hợp lệ từ câu có dấu
+  trang_thai: da_code
+  nguon: train
+quyet_dinh:
+- id: Q01
+  ten: Trả unanswerable khi một đường nói vậy
+  tai_tao: single_path_unanswerable
+  luat: §7
+  chan: chỉ nhận khi hai đường cùng kết luận + luật xác định
+  trang_thai: da_code
+  nguon: chung
+- id: Q02
+  ten: Trả lời khi hai đường lệch (đoán)
+  tai_tao: answer_on_disagree
+  luat: '§9: sai −1, bỏ trống 0'
+  chan: policy strict; bộ chấm ngưỡng P(đúng) > 0,5
+  trang_thai: da_code
+  nguon: chung
+- id: Q03
+  ten: Hết thời gian giữa chừng
+  tai_tao: timeout
+  chan: --time_budget; câu chưa làm = abstain; file nộp đủ id
+  trang_thai: da_code
+  nguon: chung
+thoi_gian_them:
+- id: H24
+  ten: '''N ngày gần nhất'' không tính hôm nay hoặc lệch 1 ngày'
+  dau_hieu: \d+ ngay gan nhat|\d+ ngay qua|\d+ ngay vua roi
+  tai_tao: window(today-N+1..today <-> today-N..today-1)
+  luat: '§2: N ngày liền nhau kể cả hôm nay'
+  chan: P['N_ngay_gan_nhat']; metamorphic biên kỳ
+  trang_thai: da_code
+  nguon: rulebook
+- id: H25
+  ten: Kỳ kết thúc bằng '< ngày cuối' thay vì hết ngày cuối (bỏ sót giờ trong ngày)
+  dau_hieu: cột ngày có giờ phút
+  tai_tao: end_exclusive_without_time
+  luat: '§2: từ X đến Y gồm cả X và Y'
+  chan: P lưu (start, end) gồm 2 đầu; so sánh theo .dt.normalize() hoặc < end + 1 ngày
+  trang_thai: da_code
+  nguon: rulebook
+- id: H26
+  ten: Bản ghi sau hôm nay (as_of) bị tính
+  dau_hieu: file có ngày sau as_of
+  tai_tao: include(date > as_of)
+  luat: 'Mở đầu rulebook: câu hỏi theo hôm nay chỉ tính đến hết hôm nay'
+  chan: 'prompt nói rõ; RuleTests: không dòng nào > AS_OF'
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H27
+  ten: Tháng trước không có ngày trùng số (31/3 so với tháng 2)
+  dau_hieu: thang nay.*thang truoc
+  tai_tao: clamp_missing
+  luat: '§2: tháng trước không có ngày đó thì đến hết tháng trước'
+  chan: resolve_periods kẹp ngày
+  trang_thai: da_code
+  nguon: rulebook
+- id: H28
+  ten: Năm nhuận / ngày 29/2
+  dau_hieu: 29/2|thang 2
+  tai_tao: invalid_date
+  luat: lịch dương
+  chan: month_range dùng lịch thật
+  trang_thai: da_code
+  nguon: rulebook
+- id: H29
+  ten: Tết tính theo âm lịch sai năm (Tết 2026 là tháng Chạp năm âm 2025 → Giêng 2026)
+  dau_hieu: tet \d{4}|truoc tet|sau tet
+  tai_tao: lunar_year_off_by_one
+  luat: '§2: 23 Chạp (năm âm Y − 1) → mùng 10 Giêng (năm âm Y)'
+  chan: tet_window từ calendar.csv
+  trang_thai: da_code
+  nguon: rulebook
+- id: H30
+  ten: '''So với trước Tết'' lấy khoảng không cùng độ dài'
+  dau_hieu: so voi truoc tet
+  tai_tao: base_window_length
+  luat: '§2: so với trước Tết = cùng số ngày liền trước'
+  chan: P['truoc_tet_y']
+  trang_thai: da_code
+  nguon: rulebook
+- id: H31
+  ten: Ca sáng/chiều theo giờ giao hoặc giờ thanh toán thay vì giờ tạo đơn; biên 14:00
+  dau_hieu: ca sang|ca chieu
+  tai_tao: shift_time_col | boundary
+  luat: '§2: theo giờ tạo đơn, ca sáng 06:00–13:59'
+  chan: metric chuẩn đọc cột giờ tạo
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H32
+  ten: '''Từ đầu năm'' tính đến hết năm thay vì hết hôm nay'
+  dau_hieu: tu dau nam|dau nam toi nay|ytd
+  tai_tao: end(today <-> dec31)
+  luat: §2
+  chan: P['tu_dau_nam']
+  trang_thai: da_code
+  nguon: rulebook
+kho_gia_von:
+- id: K01
+  ten: Tiền nhập theo ngày nhận hàng / ngày thanh toán thay vì ngày phiếu; tính phiếu huỷ
+  dau_hieu: tien nhap|nhap bao nhieu|nha cung cap
+  tai_tao: date_col | include_cancelled_receipt
+  luat: '§5: theo ngày phiếu, bỏ phiếu huỷ; nhập đầu kỳ là phiếu nhập như mọi phiếu'
+  chan: metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: K02
+  ten: Giá nhập bình quân = trung bình cộng các mức giá
+  dau_hieu: gia nhap binh quan|gia nhap trung binh
+  tai_tao: mean(price) <-> sum(price*qty)/sum(qty)
+  luat: '§5: bình quân theo số lượng nhập, theo đơn vị nhập'
+  chan: metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: K03
+  ten: Tồn theo đơn vị lớn không ra dạng [số nguyên, số lẻ cơ bản]; hàng nhiều cấp đổi lẻ sang đơn vị giữa
+  dau_hieu: may thung|may hop chan|may (goi|lon|cai) le
+  tai_tao: format(list) | middle_unit
+  luat: '§5: list 2 số; phần lẻ bằng đơn vị cơ bản'
+  chan: đặc tả output list; metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: K04
+  ten: Giá trị tồn kho nhân giá nhập/giá bán thay vì giá vốn danh mục; tính cả hàng tồn âm/0
+  dau_hieu: gia tri ton kho|gia tri hang ton
+  tai_tao: price_col | include_nonpositive
+  luat: '§5: tồn hết hôm nay × giá vốn 1 đơn vị cơ bản trong danh mục; chỉ hàng còn tồn'
+  chan: metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: K05
+  ten: 'Hết hàng cuối ngày: tính cả món pha chế, hoặc tính hết giữa ngày'
+  dau_hieu: het hang|het sach
+  tai_tao: include_made_to_order | intraday
+  luat: '§5: chỉ hàng mua về để bán, tồn = 0 lúc hết ngày'
+  chan: metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: K06
+  ten: 'Hàng ế: tính cả hàng chưa từng bán trước kỳ'
+  dau_hieu: e|khong ban duoc|khong co don
+  tai_tao: include_never_sold
+  luat: '§5: đã từng bán trước kỳ nhưng trong kỳ không có đơn'
+  chan: metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: K07
+  ten: 'Giá bán ngày D: lấy giá sau chiết khấu / bỏ đơn huỷ-trả / không quy về đơn vị cơ bản'
+  dau_hieu: gia ban .* ngay|ban voi gia
+  tai_tao: after_discount | exclude_cancel | unit
+  luat: '§5: đơn giá dòng bán, một đơn vị cơ bản, trước chiết khấu, tính cả đơn huỷ/trả'
+  chan: metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: K08
+  ten: 'Hiệu ứng tăng giá: so N ngày không cân xứng hoặc lấy lần tăng sau'
+  dau_hieu: tang gia|sau khi tang gia
+  tai_tao: window_mismatch | later_increase
+  luat: '§5: N ngày kể từ D so N ngày ngay trước D; tăng cùng giá nhiều lần lấy lần đầu'
+  chan: metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: K09
+  ten: Giá vốn tính lại từ phiếu nhập/FIFO thay vì giá vốn ghi trên dòng bán
+  dau_hieu: lai gop|loi nhat|gia von
+  tai_tao: recompute_cogs
+  luat: '§5: giá vốn dòng = số lượng × giá vốn ghi trên dòng bán (cùng đơn vị với đơn giá)'
+  chan: metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: K10
+  ten: Lãi ròng tháng bỏ sót khoản chi (sửa chữa, thay thiết bị)
+  dau_hieu: lai rong|loi nhuan rong
+  tai_tao: drop_expense_type
+  luat: '§5: trừ mọi khoản trong sổ chi phí của tháng'
+  chan: metric chuẩn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: K11
+  ten: 'Nhập trừ bán: phần bán lấy cả đơn huỷ/trả hoặc khác đơn vị phần nhập'
+  dau_hieu: nhap tru ban|chenh nhap ban|nhap nhieu hon ban
+  tai_tao: include_cancel | unit_mismatch
+  luat: '§5: bán = số lượng của đơn tính doanh thu, quy cùng đơn vị với nhập'
+  chan: metric chuẩn; H04
+  trang_thai: thiet_ke
+  nguon: rulebook
+nganh:
+- id: N01
+  ten: 'Size M/L: phân biệt hoa thường hoặc khớp ''(M)'' ở giữa tên'
+  dau_hieu: size m|size l|\(m\)|\(l\)
+  tai_tao: case_sensitive | substring
+  luat: '§6 Cà phê: tên kết thúc bằng (M)/(L), không phân biệt hoa thường'
+  chan: metric ngành
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: N02
+  ten: Thuốc kê đơn suy từ tên/hoạt chất thay vì cột kê đơn trong danh mục; tỉ lệ theo số lượng
+  dau_hieu: ke don|khong ke don|otc
+  tai_tao: infer_rx | ratio_by_qty
+  luat: '§6 Nhà thuốc: theo danh mục; tỉ lệ kê đơn theo doanh thu'
+  chan: metric ngành
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: N03
+  ten: 'Hàng hết hạn trong N ngày: tiền vốn theo giá vốn bình quân thay vì giá nhập của lô; tính lô đã hết tồn'
+  dau_hieu: het han trong|sap het han|can date
+  tai_tao: avg_cost | include_zero_stock_lot
+  luat: '§6 Nhà thuốc: lô còn tồn, hạn từ D đến D+N, giá nhập của chính lô quy về đơn vị cơ bản'
+  chan: metric ngành
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: N04
+  ten: Doanh thu theo hoạt chất cộng cả thuốc phối hợp
+  dau_hieu: hoat chat
+  tai_tao: include_combination
+  luat: '§6: thuốc phối hợp là một loại riêng'
+  chan: khớp hoạt chất đúng nguyên chuỗi
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: N05
+  ten: 'Lô gần hết hạn nhất: chọn cả lô đã quá hạn hoặc đã hết tồn'
+  dau_hieu: lo gan het han
+  tai_tao: include_expired
+  luat: §6
+  chan: metric ngành
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: N06
+  ten: 'Số đợt giao: đếm theo đơn thay vì theo đợt; bỏ đợt của đơn sau đó trả hàng'
+  dau_hieu: dot giao|giao may dot
+  tai_tao: count_orders | exclude_returned
+  luat: '§6 VLXD: mỗi đợt của mỗi đơn tính một đợt, kể cả đơn trả'
+  chan: metric ngành
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: N07
+  ten: 'Ngành mới ở private không có luật riêng: áp nhầm luật ngành khác'
+  dau_hieu: README shop nói ngành chưa gặp
+  tai_tao: wrong_industry_rule
+  luat: '§6: chỉ luật ngành của đúng ngành; còn lại luật chung'
+  chan: thẻ shop ghi ngành; luật ngành chỉ bật khi README khớp
+  trang_thai: thiet_ke
+  nguon: rulebook
+khong_tra_loi:
+- id: U01
+  ten: Trả 0 khi kỳ nằm hoàn toàn ngoài dữ liệu
+  dau_hieu: ky truoc ngay dau du lieu hoac sau as_of
+  tai_tao: unanswerable -> 0
+  luat: '§7: không có dữ liệu khác với bằng 0'
+  chan: luật 'không trả lời được' kiểm khoảng ngày có dữ liệu
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: U02
+  ten: Trả unanswerable khi kỳ chỉ có một phần dữ liệu
+  dau_hieu: ky cat ngang ngay dau du lieu
+  tai_tao: partial -> unanswerable
+  luat: '§7: kỳ một phần trong dữ liệu thì tính phần có'
+  chan: luật
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: U03
+  ten: Suy thông tin không có trong file (giới tính từ tên, địa chỉ từ SĐT, lý do huỷ)
+  dau_hieu: gioi tinh|nam hay nu|o dau|vi sao|ly do|danh gia
+  tai_tao: infer_missing_field
+  luat: '§7: thông tin file không ghi thì không suy ra từ cột khác'
+  chan: kiểm cột cần có trong thẻ shop; không có -> unanswerable
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: U04
+  ten: Dùng hiểu biết bên ngoài (giá thị trường, ngày lễ không có trong calendar)
+  dau_hieu: gia thi truong|le 30/4|ngay le
+  tai_tao: external_knowledge
+  luat: '§7: chỉ lấy từ dữ liệu phát hành'
+  chan: 'prompt; kiểm toán: số không truy được về bảng nào'
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: U05
+  ten: Thực thể không có trong shop nhưng trả 0 / trả tên gần giống
+  dau_hieu: ten hang/khach khong khop
+  tai_tao: fuzzy_match_to_other
+  luat: §7 + §8
+  chan: 'chỉ mục giá trị: không khớp ở cả 4 mức -> unanswerable hoặc bỏ trống'
+  trang_thai: thiet_ke
+  nguon: rulebook
+cham_diem:
+- id: S01
+  ten: Tiền ra số lẻ (không làm tròn về đồng); trung bình tiền làm tròn 2 chữ số
+  tai_tao: round(2) on money
+  luat: '§9: tiền và trung bình tiền làm tròn về đồng'
+  chan: format_answer theo loại số đo
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: S02
+  ten: Liệt kê sai thứ tự (số đo giảm dần, cùng số đo theo mã; theo hạn dùng; chỉ lọc thì theo mã)
+  tai_tao: order_rule
+  luat: §9 Danh sách
+  chan: RANK/ORDER chuẩn trong trình biên dịch
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: S03
+  ten: 'Bảng: cột đầu không phải tên đối tượng; cột số đo sai thứ tự câu hỏi'
+  tai_tao: column_order
+  luat: §9 Bảng
+  chan: đặc tả output.columns theo thứ tự span trong câu
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: S04
+  ten: 'Câu hỏi một đối tượng nhưng có hoà: không lấy đối tượng đầu theo mã'
+  tai_tao: tie_pick
+  luat: §9 Bằng nhau
+  chan: H18
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: S05
+  ten: Tên trả về sai dấu tiếng Việt (do lấy từ câu đã chuẩn hoá thay vì từ file)
+  tai_tao: name_from_question
+  luat: '§9 Chuỗi: ngoài cách viết trong file, dấu phải đúng'
+  chan: lấy tên từ bảng dữ liệu
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: S06
+  ten: Câu nhiều số trả một số / trả dict thay vì list theo thứ tự câu
+  tai_tao: multi_value_format
+  luat: §9
+  chan: đặc tả output.type = list + thứ tự span
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: S07
+  ten: reason không phải chuỗi làm dòng unanswerable bị tính bỏ trống
+  tai_tao: reason_type
+  luat: §7
+  chan: format_answer ép str(reason)
+  trang_thai: da_code
+  nguon: rulebook
+code_model:
+- id: M01
+  ten: Lọc tên bằng str.contains (khớp nhiều SKU, ký tự regex đặc biệt '(', '+', '%')
+  tai_tao: contains_match
+  chan: prompt cấm; ast kiểm .str.contains với chuỗi ngắn (thiết kế); dùng key() so bằng
+  trang_thai: da_code
+  nguon: chung
+- id: M02
+  ten: merge nhân bản dòng (khoá không duy nhất) làm doanh thu gấp nhiều lần
+  tai_tao: join_explosion
+  chan: 'kiểm hợp lý: tổng sau merge không vượt tổng trước merge; validate=''m:1'''
+  trang_thai: thiet_ke
+  nguon: chung
+- id: M03
+  ten: groupby theo tên thay vì mã (hai khách trùng tên bị gộp)
+  tai_tao: group_by_name
+  luat: '§3: có mã thì theo mã'
+  chan: metric chuẩn; prompt
+  trang_thai: thiet_ke
+  nguon: chung
+- id: M04
+  ten: NaN làm phép so sánh/tổng sai (NaN == NaN là False; sum bỏ NaN im lặng)
+  tai_tao: nan_handling
+  chan: 'kiểm hợp lý: tỉ lệ NaN ở cột dùng tính'
+  trang_thai: thiet_ke
+  nguon: chung
+- id: M05
+  ten: So chuỗi phân biệt hoa thường / dấu / khoảng trắng
+  tai_tao: raw_string_eq
+  chan: key() trong namespace; prompt
+  trang_thai: da_code
+  nguon: chung
+- id: M06
+  ten: Dùng cột/bảng không tồn tại (bịa tên cột) rồi except che lỗi
+  tai_tao: hallucinated_column
+  chan: 'sandbox báo lỗi -> sửa 1 lần; cấm except: pass (thiết kế)'
+  trang_thai: da_code
+  nguon: chung
+- id: M07
+  ten: Đọc bảng tổng hợp/báo cáo thay vì sổ giao dịch
+  tai_tao: wrong_table
+  chan: thẻ shop ghi loại bảng; kiểm toán K1
+  trang_thai: thiet_ke
+  nguon: chung
+- id: M08
+  ten: Chia số nguyên / làm tròn sớm ở bước giữa
+  tai_tao: early_round
+  chan: chỉ làm tròn ở bước cuối (rhu, pct)
+  trang_thai: da_code
+  nguon: chung
+- id: M09
+  ten: Trả kiểu numpy / pandas (np.int64, Timestamp, Series một phần tử)
+  tai_tao: numpy_types
+  chan: jdump + format_answer nhận kiểu numpy
+  trang_thai: da_code
+  nguon: chung
+- id: M10
+  ten: Code chạy quá thời gian (vòng lặp từng dòng trên 100k dòng)
+  tai_tao: timeout
+  chan: --exec_timeout; prompt khuyên vector hoá
+  trang_thai: da_code
+  nguon: chung
+- id: M11
+  ten: Đường code tự do và trình biên dịch cùng sai vì cùng đọc nhầm thẻ dữ liệu
+  tai_tao: shared_card_error
+  chan: 'K1: đường B đọc bảng gốc, đường A đọc sổ chuẩn'
+  trang_thai: thiet_ke
+  nguon: chung
+- id: M12
+  ten: Prompt quá dài làm hỏng cả lô
+  tai_tao: prompt_overflow
+  chan: LLM.generate bỏ riêng prompt quá dài
+  trang_thai: da_code
+  nguon: chung
+thuc_the:
+- id: E01
+  ten: Tên trong câu khác tên trong file (lạc / đậu phộng, Coca / Coca-Cola)
+  tai_tao: alias_miss
+  luat: '§8: tên gọi khác của cùng một thứ là cùng một thứ'
+  chan: chỉ mục giá trị 4 mức + bảng tên gọi khác
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: E02
+  ten: Tên khách kèm số điện thoại trong file; câu chỉ nêu tên
+  tai_tao: name_with_phone
+  luat: '§9: tên kèm SĐT như trong file cũng được nhận'
+  chan: khớp theo phần tên; trả nguyên chuỗi trong file
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: E03
+  ten: Khách lẻ ghi nhiều kiểu ('Khách lẻ', 'khach le', 'KHÁCH VÃNG LAI', trống)
+  tai_tao: walkin_variants
+  luat: §3
+  chan: danh sách biến thể + key(); audit D4
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: E04
+  ten: Nhóm hàng gần tên bị gộp ('Bánh ngọt' và 'Bánh ngọt Âu')
+  tai_tao: merge_similar_group
+  luat: '§3: không gộp nhóm khác tên dù tên gần nhau'
+  chan: khớp đúng tên nhóm
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: E05
+  ten: Mã trong câu viết khác file ('sp66' / 'SP0066')
+  tai_tao: code_format
+  chan: 'chuẩn hoá mã: bỏ số 0 đầu khi so'
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: E06
+  ten: Tên hàng có số/đơn vị bị bộ sửa chữ hoặc bộ tách số làm hỏng ('Otrivin 0,1%', '90g')
+  tai_tao: entity_mangled
+  chan: khoá tên hàng trước khi sửa chữ; audit Q2
+  trang_thai: da_code
+  nguon: rulebook
+du_lieu_them:
+- id: D16
+  ten: Đơn có nhiều trạng thái khác nhau giữa các dòng
+  dau_hieu: cùng mã đơn, cột trạng thái khác nhau
+  tai_tao: status_per_line
+  luat: '§8: mỗi đơn đúng một trạng thái'
+  chan: lấy trạng thái dòng đầu nhóm; báo trong ghi chú (thiết kế)
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: D17
+  ten: Trả một phần nằm ở bảng trả hàng riêng, không ở trạng thái đơn
+  dau_hieu: bảng tra_hang / phieu_tra
+  tai_tao: miss_partial_return
+  luat: '§1: đơn có trả hàng kể cả một phần là đơn trả'
+  chan: 'RuleTests: mọi mã đơn trong bảng trả đều bị loại khỏi doanh thu'
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: D18
+  ten: Đơn vị lớn chỉ có trong bảng quy đổi (không ở dòng bán); hệ số theo từng mặt hàng
+  dau_hieu: bảng quy đổi / README hệ số
+  tai_tao: fixed_factor
+  luat: '§10: hệ số khác theo shop và mặt hàng; không có dòng quy đổi là đơn vị cơ bản, hệ số 1'
+  chan: join bảng quy đổi theo mặt hàng + đơn vị
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: D19
+  ten: File CSV mã hoá lạ (cp1258, utf-16), dấu phân cách ';' hoặc tab
+  tai_tao: encoding
+  chan: read_tables thử nhiều encoding, sep=None
+  trang_thai: da_code
+  nguon: rulebook
+- id: D20
+  ten: 'Excel: ô ngày là số serial, ô gộp (merged), sheet ẩn, nhiều bảng trong một sheet'
+  tai_tao: excel_layout
+  chan: 'serial theo tên cột ngày; detect_header; (nhiều bảng một sheet: thiết kế)'
+  trang_thai: da_code
+  nguon: rulebook
+- id: D21
+  ten: 'SQLite: kiểu cột lẫn, view trùng bảng, khoá ngoại theo IDCuaHang'
+  tai_tao: sqlite_layout
+  chan: đọc mọi bảng/view; thẻ shop ghi rõ; nhận mã đơn kiểu camelCase
+  trang_thai: da_code
+  nguon: rulebook
+- id: D22
+  ten: Bảng dạng rộng (mỗi tháng một cột) không xoay về dạng dọc
+  tai_tao: wide_table
+  chan: Auto-Tables wide_to_long (thiết kế v3 mục 7)
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: D23
+  ten: Số âm ghi bằng ngoặc hoặc dấu trừ cuối ('250.000-')
+  tai_tao: trailing_minus
+  chan: 'parse_money_one có ngoặc; dấu trừ cuối: thiết kế'
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: D24
+  ten: Giờ ghi 12h có SA/CH, AM/PM
+  tai_tao: ampm
+  chan: parse_date_one xử lý CH/PM
+  trang_thai: da_code
+  nguon: rulebook
+- id: D25
+  ten: Cột tiền ghi đơn vị nghìn ở tiêu đề ('Tiền (nghìn đ)')
+  dau_hieu: nghin|ngan|x1000|k\)
+  tai_tao: scale_in_header
+  chan: audit D2; nhân 1000 theo tiêu đề (thiết kế)
+  trang_thai: thiet_ke
+  nguon: rulebook
+ngon_ngu_cau_hoi:
+- id: L01
+  ten: Phủ định trong câu bị bỏ qua ('không bán được', 'chưa từng mua', 'không có đơn')
+  dau_hieu: khong ban duoc|chua tung|chua co|khong co don|khong mua
+  tai_tao: drop_negation
+  luat: đọc đủ nghĩa câu
+  chan: 'đặc tả có trường negation + span; kiểm hợp lý: tập kết quả là phần bù'
+  trang_thai: thiet_ke
+  nguon: chung
+- id: L02
+  ten: Phủ định kép / 'không phải là không'
+  dau_hieu: khong phai khong|khong ai khong
+  tai_tao: double_negation
+  luat: đọc đủ nghĩa câu
+  chan: luật chọn nghĩa; thường bỏ trống nếu còn mơ hồ
+  trang_thai: thiet_ke
+  nguon: chung
+- id: L03
+  ten: '''Trừ / ngoại trừ / không tính'' bị bỏ qua'
+  dau_hieu: tru |ngoai tru|khong tinh|khong ke|bo qua
+  tai_tao: drop_exclusion
+  luat: đọc đủ nghĩa câu
+  chan: đặc tả filters op '!='
+  trang_thai: thiet_ke
+  nguon: chung
+- id: L04
+  ten: 'Lượng từ: ''ít nhất một lần'', ''mọi'', ''tất cả'', ''bất kỳ'', ''chỉ'''
+  dau_hieu: it nhat mot|moi |tat ca|bat ky|chi (mua|ban|co)
+  tai_tao: quantifier(any <-> all <-> only)
+  luat: đọc đủ nghĩa câu
+  chan: đặc tả logic ALL/ANY; metamorphic bỏ vế (H03)
+  trang_thai: thiet_ke
+  nguon: chung
+- id: L05
+  ten: '''Liên tiếp / liên tục'' hiểu thành tổng số lần'
+  dau_hieu: lien tiep|lien tuc|moi thang deu|thang nao cung
+  tai_tao: consecutive -> count
+  luat: đọc đủ nghĩa câu
+  chan: phép CONSECUTIVE trong trình biên dịch
+  trang_thai: thiet_ke
+  nguon: chung
+- id: L06
+  ten: Hai câu hỏi trong một câu (trả một số cho câu hỏi hai vế)
+  dau_hieu: va bao nhieu|, con|dong thoi cho biet
+  tai_tao: answer_first_only
+  luat: '§9: câu nhiều số ghi list theo thứ tự'
+  chan: đặc tả output list
+  trang_thai: thiet_ke
+  nguon: chung
+- id: L07
+  ten: Đại từ / tỉnh lược ('nó', 'món đó', 'khách ấy') không xác định được
+  dau_hieu: \bno\b|mon do|khach ay|cai do
+  tai_tao: unresolved_reference
+  luat: §7
+  chan: không có thực thể rõ -> bỏ trống
+  trang_thai: thiet_ke
+  nguon: chung
+- id: L08
+  ten: So sánh hơn/kém nhầm hướng ('kém hơn', 'thua', 'vượt')
+  dau_hieu: kem hon|thua|vuot|hon .* bao nhieu
+  tai_tao: comparative_direction
+  luat: §1
+  chan: H01 + dấu kết quả
+  trang_thai: thiet_ke
+  nguon: chung
+- id: L09
+  ten: Câu giả định / tương lai ('nếu giảm giá 10% thì', 'tháng sau sẽ')
+  dau_hieu: neu .* thi|se (ban|duoc)|du doan|du kien
+  tai_tao: hypothetical
+  luat: '§7: chỉ trả lời từ dữ liệu'
+  chan: không trả lời được khi cần dự đoán
+  trang_thai: thiet_ke
+  nguon: chung
+- id: L10
+  ten: Đơn vị trong câu khác đơn vị muốn trả ('bao nhiêu thùng' nhưng dữ liệu bán lẻ lon)
+  dau_hieu: bao nhieu (thung|hop|loc|vi|bao|kg)
+  tai_tao: answer_in_base_unit
+  luat: '§5: câu nêu đơn vị thì theo đơn vị đó'
+  chan: đặc tả unit.want; H04
+  trang_thai: thiet_ke
+  nguon: chung
+- id: L11
+  ten: '''Trung bình mỗi ngày'' tính theo ngày có bán thay vì mọi ngày của kỳ'
+  dau_hieu: trung binh moi ngay|binh quan ngay
+  tai_tao: denominator(selling_days <-> all_days)
+  luat: chữ sau 'mỗi' quyết định mẫu số
+  chan: H13; metric chuẩn ghi rõ
+  trang_thai: thiet_ke
+  nguon: chung
+- id: L12
+  ten: Câu hỏi tiếng Anh / lẫn tiếng Anh ('total revenue', 'top seller')
+  dau_hieu: total|revenue|top|seller|best
+  tai_tao: english_term
+  chan: teencode.tsv nhóm tiếng Anh; LLM đọc câu gốc
+  trang_thai: da_code
+  nguon: chung
+so_hoc:
+- id: A01
+  ten: Chia cho 0 (kỳ gốc bằng 0 khi tính % tăng trưởng)
+  tai_tao: zero_division
+  luat: §7 / quy ước của rulebook nếu có
+  chan: kiểm mẫu số = 0 -> không trả lời được hoặc theo luật
+  trang_thai: thiet_ke
+  nguon: chung
+- id: A02
+  ten: So sánh số thực bằng == (0.1+0.2)
+  tai_tao: float_eq
+  chan: làm tròn trước khi so; dùng Decimal cho tiền
+  trang_thai: thiet_ke
+  nguon: chung
+- id: A03
+  ten: Tràn / sai kiểu khi cộng chuỗi số ('1.200' cộng như chuỗi)
+  tai_tao: string_sum
+  chan: định kiểu cột khi đọc; ast cảnh báo .sum() trên cột chữ
+  trang_thai: da_code
+  nguon: chung
+- id: A04
+  ten: Làm tròn HALF_UP với số âm (−2,5 → −3 hay −2)
+  tai_tao: neg_half_up
+  luat: §3/§9
+  chan: rhu() xử lý dấu theo rulebook
+  trang_thai: thiet_ke
+  nguon: chung
+- id: A05
+  ten: Phần trăm của phần trăm (tăng 10 điểm % hay tăng 10 %)
+  dau_hieu: diem phan tram|tang .*% so
+  tai_tao: pp_vs_pct
+  chan: luật chọn nghĩa
+  trang_thai: thiet_ke
+  nguon: chung
+- id: A06
+  ten: Trung vị / mode bị thay bằng trung bình
+  dau_hieu: trung vi|pho bien nhat|thuong gap nhat
+  tai_tao: mean_for_median
+  chan: đặc tả agg
+  trang_thai: thiet_ke
+  nguon: chung
+thoi_gian_nang_cao:
+- id: H33
+  ten: Năm 2 chữ số ('25' là 2025 hay 1925)
+  dau_hieu: \d{1,2}/\d{1,2}/\d{2}\b
+  tai_tao: two_digit_year
+  chan: 'parse_date_one: 2 chữ số -> 20xx'
+  trang_thai: da_code
+  nguon: rulebook
+- id: H34
+  ten: Giờ nửa đêm (đơn 23:59 vs 00:01) rơi sang ngày khác
+  tai_tao: midnight_boundary
+  chan: so ngày theo ngày dương lịch của giờ tạo đơn
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H35
+  ten: Kỳ 'tháng 13', 'quý 5', ngày không tồn tại trong câu
+  tai_tao: invalid_period
+  luat: §7
+  chan: resolve_periods trả lỗi -> không trả lời được
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H36
+  ten: Khoảng ngày viết ngược ('từ 20/5 đến 1/5')
+  tai_tao: reversed_range
+  chan: đổi chỗ hoặc bỏ trống theo luật
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H37
+  ten: '''Cuối tuần'' (T7–CN) hiểu thành ''tuần trước'''
+  dau_hieu: cuoi tuan
+  tai_tao: weekend_vs_lastweek
+  chan: P['cuoi_tuan'] (thiết kế)
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H38
+  ten: '''Đầu tháng / giữa tháng / cuối tháng'' không có định nghĩa'
+  dau_hieu: dau thang|giua thang|cuoi thang
+  tai_tao: vague_part_of_month
+  luat: §7 nếu rulebook không định nghĩa
+  chan: mơ hồ thật -> bỏ trống
+  trang_thai: thiet_ke
+  nguon: rulebook
+- id: H39
+  ten: Thứ trong tuần ('thứ 7 tuần trước') lệch tuần
+  dau_hieu: thu [2-7]|chu nhat
+  tai_tao: weekday_week_offset
+  luat: §2 tuần bắt đầu thứ Hai
+  chan: resolve_periods (thiết kế)
+  trang_thai: thiet_ke
+  nguon: rulebook
+dau_vao_ood:
+- id: O01
+  ten: Ngành chưa từng gặp (spa, garage, nha khoa…) với khái niệm lạ (lượt, gói, liệu trình)
+  tai_tao: unknown_industry_concept
+  chan: agent cấu hình shop đọc README; không áp luật ngành khác (N07)
+  trang_thai: thiet_ke
+  nguon: chung
+- id: O02
+  ten: Định dạng file mới (JSON, Parquet, nhiều sheet lồng, PDF hoá đơn)
+  tai_tao: unknown_format
+  chan: read_tables báo không đọc được -> ghi chú thẻ shop; câu cần bảng đó -> bỏ trống
+  trang_thai: thiet_ke
+  nguon: chung
+- id: O03
+  ten: Tên cột tiếng Anh / viết tắt lạ ('qty', 'amt', 'cust_id')
+  tai_tao: unknown_column_name
+  chan: từ điển tên cột song ngữ; thẻ shop in mẫu giá trị
+  trang_thai: thiet_ke
+  nguon: chung
+- id: O04
+  ten: Trạng thái đơn bằng tiếng Anh hoặc mã số (1/2/3, 'done', 'void')
+  tai_tao: status_codes
+  chan: README; ánh xạ trạng thái phải phủ mọi giá trị (D07)
+  trang_thai: thiet_ke
+  nguon: chung
+- id: O05
+  ten: Tiền tệ khác VND (USD) hoặc nhiều tiền tệ
+  tai_tao: currency
+  chan: README; không quy đổi nếu không có tỉ giá -> không trả lời được
+  trang_thai: thiet_ke
+  nguon: chung
+- id: O06
+  ten: Dữ liệu rất lớn (vài triệu dòng) làm quá thời gian
+  tai_tao: scale
+  chan: cache Business; vector hoá; --time_budget
+  trang_thai: da_code
+  nguon: chung
+- id: O07
+  ten: Rulebook private thêm/bớt/đổi luật so với public
+  tai_tao: rule_drift
+  chan: sinh lại RuleTests từ rulebook mới; bản đồ độ nhạy luật (v3 5A.4)
+  trang_thai: thiet_ke
+  nguon: chung
+- id: O08
+  ten: Kiểu câu hỏi mới chưa có metric chuẩn
+  tai_tao: new_question_type
+  chan: chỉ còn đường B -> độ tin thấp -> bỏ trống nhiều hơn (cố ý)
+  trang_thai: thiet_ke
+  nguon: chung
+quy_trinh:
+- id: P01
+  ten: Cache cũ dùng nhầm sau khi đổi logic đọc dữ liệu
+  tai_tao: stale_cache
+  chan: BIZ_CACHE_VER trong tên file cache
+  trang_thai: da_code
+  nguon: chung
+- id: P02
+  ten: Cache LLM trả đáp án cũ sau khi đổi prompt
+  tai_tao: stale_llm_cache
+  chan: khoá cache = sha256(prompt đầy đủ)
+  trang_thai: da_code
+  nguon: chung
+- id: P03
+  ten: Không tái lập được (ΔPA > 0,03) giữa hai lần chạy
+  tai_tao: nondeterminism
+  chan: greedy, seed cố định, PYTHONHASHSEED, cùng phiên bản thư viện
+  trang_thai: da_code
+  nguon: chung
+- id: P04
+  ten: File nộp thiếu id / trùng id / sai thứ tự
+  tai_tao: submission_format
+  chan: bước kiểm format trong notebook; ghi đủ id, thiếu = abstain
+  trang_thai: da_code
+  nguon: chung
+- id: P05
+  ten: Thiếu log trong /result/logs
+  tai_tao: missing_logs
+  chan: predict.sh tee run.log; logs/<id>.json
+  trang_thai: da_code
+  nguon: chung
+- id: P06
+  ten: Docker cần mạng (tải model/thư viện lúc chạy)
+  tai_tao: network_at_runtime
+  chan: HF_HUB_OFFLINE=1; trọng số đóng sẵn trong image
+  trang_thai: da_code
+  nguon: chung
+tuan_thu:
+- id: R01
+  ten: Logic theo ID câu hỏi / ID shop
+  tai_tao: id_keyed_logic
+  luat: Quy định cuộc thi
+  chan: scripts/check_compliance.py quét code
+  trang_thai: da_code
+  nguon: quy_dinh
+- id: R02
+  ten: Dùng dữ liệu / đáp án public hoặc private để huấn luyện, chỉnh ngưỡng, viết luật
+  tai_tao: test_data_leak
+  luat: Quy định 6
+  chan: chỉ đo trên train; check_compliance.py tìm id câu public trong repo; không lưu file đáp án
+  trang_thai: da_code
+  nguon: quy_dinh
+- id: R03
+  ten: Model / dữ liệu phụ có giấy phép không cho phép dùng
+  tai_tao: license
+  chan: README ghi giấy phép từng thành phần; lexicon/gpl tách riêng
+  trang_thai: da_code
+  nguon: quy_dinh
+- id: R04
+  ten: Tổng tham số vượt 15B
+  tai_tao: param_budget
+  chan: bảng ngân sách trong docs (Qwen 7,6B + bge-m3 0,57B)
+  trang_thai: da_code
+  nguon: quy_dinh
