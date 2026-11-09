@@ -94,12 +94,17 @@ Thêm `--lm_texts /path/train/questions.jsonl` để bộ sửa chữ học thê
 Đầu ra của `run`: `submission.jsonl`, `rulebook_rules.json` (luật đã tách + tham số rút từ rulebook), `logs/<id>.json` (câu đã chuẩn hoá, cảnh báo, code từng đường, quyết định), `run_summary.json`.
 Chạy lại cùng lệnh thì **tiếp tục** từ câu chưa làm; thêm `--fresh` để chạy lại từ đầu.
 
-## Kaggle
+## Kaggle (Run All → file nộp public)
 
-1. Đẩy repo lên GitHub (**private**).
-2. Repo private: tạo token chỉ đọc → Kaggle *Add-ons → Secrets* → `GITHUB_TOKEN`.
-3. Dữ liệu đưa lên **Kaggle Dataset riêng**, không đưa lên GitHub. Notebook mặc định đọc `/kaggle/input/datasets/gmnguynhng/copypaste` (sửa `INPUT_DIR` ở bước 3 nếu khác; không thấy thì tự tìm trong `/kaggle/input`).
-4. Mở `notebooks/datamate_kaggle.ipynb`, sửa `REPO_URL` ở bước 3, chạy lần lượt. Bước 6 cho điểm trên TRAIN; bước 7 ra file nộp public `submission_public.jsonl` (chấm trên leaderboard).
+1. Đẩy repo lên GitHub (`Hana-ai-18/CopyPaste`). Code ở gốc repo hay trong thư mục con đều được (notebook tự tìm `datamate_pipeline.py`).
+2. Repo private: Kaggle *Add-ons → Secrets* → `GITHUB_TOKEN` (token chỉ đọc). Repo public: bỏ qua.
+3. Notebook `notebooks/datamate_kaggle.ipynb`: *Accelerator = GPU T4 x2*, *Internet = On*, *Add Input* dataset `gmnguynhng/copypaste`.
+4. **Run All** → `/kaggle/working/submission.jsonl` (+ `outputs.zip` log).
+
+Notebook tự: giải nén dữ liệu, tìm train (có `answers.jsonl`) / public, clone code, cài vLLM bản chạy được trên T4
+(thử `vllm 0.10.1.1` engine V0 → `0.8.5.post1` → backend `hf` → không LLM), nạp thử model thật trước khi chạy, dựng
+`spec_bank` từ train, đo nhanh trên train, chạy public với ngân sách = thời gian còn lại của phiên, kiểm định dạng và ghi file nộp.
+Sửa notebook: sửa `notebooks/build_kaggle_notebook.py` rồi chạy `python notebooks/build_kaggle_notebook.py`.
 
 ## Docker (bản nộp)
 

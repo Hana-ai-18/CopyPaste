@@ -353,3 +353,14 @@ def test_quarter_slash_year_not_month():
         P = C._period(C.canon_period_text(C.key(q), a), a)
         assert P is not None and (str(P[0].date()), str(P[1].date())) == want, (q, P)
     assert C._period(C.canon_period_text(C.key("quyết định 3 món"), a), a) is None
+
+
+def test_notebook_valid_types_match_pipeline():
+    """Notebook Kaggle tự kiểm file nộp: tập type hợp lệ phải trùng pipeline (từng thiếu 'boolean' -> đáp án đúng bị đổi thành abstain)."""
+    import ast
+    import re
+    import datamate_pipeline as d
+    here = os.path.dirname(os.path.abspath(__file__))
+    src = open(os.path.join(here, "..", "notebooks", "build_kaggle_notebook.py"), encoding="utf-8").read()
+    m = re.search(r"VALID = (\{[^}]*\})", src)
+    assert m and ast.literal_eval(m.group(1)) == d.VALID_TYPES

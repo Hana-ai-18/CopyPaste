@@ -1855,13 +1855,19 @@ class Business:
         # khoá cache gồm CHỮ KÝ NỘI DUNG thư mục (tên + cỡ file): hai split có thể trùng mã shop (vd dev_001) — không được nạp nhầm
         sig = hashlib.sha1("|".join(f"{os.path.relpath(f, biz_dir)}:{os.path.getsize(f)}" for f in sorted(glob.glob(os.path.join(biz_dir, "**", "*"), recursive=True))
                                      if os.path.isfile(f)).encode("utf-8")).hexdigest()[:12]
-        cp = os.path.join(cache_dir, f"{self.id}.{BIZ_CACHE_VER}.{sig}.pkl") if cache_dir else None
+        # + phiên bản pandas: pickle DataFrame của pandas 3 không nạp đúng ở pandas 2 (và ngược lại)
+        pv = ".".join(pd.__version__.split(".")[:2])
+        cp = os.path.join(cache_dir, f"{self.id}.{BIZ_CACHE_VER}.pd{pv}.{sig}.pkl") if cache_dir else None
         if cp and os.path.exists(cp):
-            with open(cp, "rb") as fh:
-                d = pickle.load(fh)
-            self.__dict__.update(d)
-            self.activate()
-            return
+            try:
+                with open(cp, "rb") as fh:
+                    d = pickle.load(fh)
+                self.__dict__.update(d)
+                self.dir = biz_dir                 # thư mục có thể đã đổi chỗ (cache chép từ máy khác)
+                self.activate()
+                return
+            except Exception as e:             # cache hỏng / ghi dở -> đọc lại từ dữ liệu gốc
+                print(f"  [cảnh báo] cache {os.path.basename(cp)} hỏng ({type(e).__name__}) -> đọc lại", flush=True)
         t0 = now()
         # README TRƯỚC: mô tả cột dùng ngay từ bước làm sạch (nhận mã đơn theo mô tả...) — không để sót ngữ cảnh shop trước
         self.readme = ""
@@ -1898,8 +1904,10 @@ class Business:
         self.terms = collect_terms(self)
         if cp:
             os.makedirs(cache_dir, exist_ok=True)
-            with open(cp, "wb") as fh:
+            tmp = f"{cp}.{os.getpid()}.tmp"        # ghi nguyên tử: bị ngắt giữa chừng không để lại pickle dở
+            with open(tmp, "wb") as fh:
                 pickle.dump({k: v for k, v in self.__dict__.items()}, fh)
+            os.replace(tmp, cp)
 
 
 def merge_same_structure(T, types, notes):
@@ -3733,6 +3741,14 @@ def run(args):
     if getattr(args, "calibration", None) and os.path.exists(args.calibration):
         args._calibration = json.load(open(args.calibration, encoding="utf-8")).get("bang")
         print(f"Hiệu chỉnh bỏ trống: {sum(1 for v in args._calibration.values() if v.get('bo_trong'))} nhãn bỏ trống (đo trên train)", flush=True)
+    if args.llm == "none":
+        # không có LLM chạy được (vd máy không GPU): chỉ nộp đáp án CHẮC CHẮN của đường máy tính, còn lại abstain
+        write_submission()
+        with open(os.path.join(out_dir, "run_summary.json"), "w", encoding="utf-8") as fh:
+            fh.write(jdump({"llm": "none", "tam": len(provisional), "n": len(all_ids),
+                            "tong_tu_dau_tien_trinh_s": round(now() - PROC_T0, 1)}))
+        print(f"--llm none: chỉ đáp án chắc chắn của đường máy tính ({len(provisional)}/{len(all_ids)} câu)", flush=True)
+        return
     try:
         llm = LLM(args.llm, args.model, cache_dir, max_model_len=args.max_model_len, tp=args.tp, gpu_mem=args.gpu_mem)
     except Exception:
@@ -4047,7 +4063,7 @@ def main():
     r.add_argument("--split_dir", required=True)
     r.add_argument("--out", required=True)
     r.add_argument("--cache", default=None)
-    r.add_argument("--llm", default="vllm", choices=["vllm", "hf", "dummy"])
+    r.add_argument("--llm", default="vllm", choices=["vllm", "hf", "dummy", "none"], help="none = không LLM: chỉ đáp án chắc chắn của đường máy tính")
     r.add_argument("--model", default="Qwen/Qwen2.5-Coder-7B-Instruct-AWQ")
     r.add_argument("--max_model_len", type=int, default=28000)
     r.add_argument("--tp", type=int, default=1)

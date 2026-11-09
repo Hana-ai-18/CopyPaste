@@ -55,6 +55,16 @@ Luật BTC liên quan nhắc lại: chấm PA = (đúng − sai)/N, bỏ trống
 | R25 | Nâng cấp `transformers` trong image vLLM làm hỏng vLLM dựng sẵn | Dockerfile không nâng cấp transformers/torch; chỉ cài gói thuần Python | ĐÃ XỬ LÝ |
 | R26 | ViLexNorm (CC BY-NC-SA 4.0): dùng làm tài nguyên công khai được luật 6 cho phép, nhưng bảng ánh xạ của nó **xung đột miền** (kg→không, bn→bạn, k→không) | Chỉ dùng để ĐO bộ sửa chữ (`scripts/eval_vilexnorm.py`), **không** gộp vào normalizer | ĐÃ XỬ LÝ |
 
+## F. Chạy trên Kaggle (phát triển + nộp public)
+
+| # | Rủi ro | Xử lý | Trạng thái |
+|---|---|---|---|
+| R27 | Cache pickle shop dựng bằng pandas 3 nạp ở pandas 2 (hoặc file pickle ghi dở) → lỗi / sai ngầm | Khoá cache thêm phiên bản pandas; nạp lỗi → đọc lại dữ liệu gốc; ghi pickle nguyên tử | ĐÃ XỬ LÝ |
+| R28 | `pip install vllm` bản mới nhất (0.33, torch 2.14) có thể không chạy trên T4 / driver Kaggle; vLLM ≥ 0.11 bỏ engine V0 (đường chạy quen thuộc của T4) | Notebook ghim `vllm==0.10.1.1` (+ transformers cùng thời), `VLLM_USE_V1=0`; nạp THẬT model + sinh thử trước khi chạy; lỗi thì thử `0.8.5.post1`, rồi `hf`, rồi không LLM | ĐÃ XỬ LÝ (chưa chạy được trên T4 thật ở môi trường này) |
+| R29 | Không LLM nào chạy được → dummy LLM sinh đáp án vô nghĩa | `--llm none`: chỉ nộp đáp án chắc chắn của đường máy tính (precision 1,0 trên mẫu train), còn lại abstain | ĐÃ XỬ LÝ |
+| R30 | Hết 12 giờ phiên Kaggle khi chưa xong public | Ngân sách public = thời gian còn lại − 15 phút; submission luôn đủ câu; chạy lại ô bước 8 sẽ tiếp tục | ĐÃ XỬ LÝ |
+| R31 | Kết quả khác giữa Python 3.11/pandas 2.2 (Kaggle) và Python 3.13/pandas 3 (máy dev) | Đo: đường máy tính trên 3000 câu train cho **0 khác biệt** đáp án giữa hai môi trường | ĐÃ KIỂM |
+
 ## Số đo tổng (đường máy tính, không LLM, 3000 câu train, pandas 3.0.5)
 
 | | trả lời | đúng | sai | precision | PA |
