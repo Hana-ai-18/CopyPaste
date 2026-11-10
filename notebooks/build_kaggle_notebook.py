@@ -44,7 +44,7 @@ import os, sys, time, json, glob, shutil, zipfile, subprocess, collections, re
 T0 = time.time()                       # mốc tính ngân sách thời gian của cả phiên
 
 REPO_URL   = "https://github.com/Hana-ai-18/CopyPaste.git"
-BRANCH     = ""                        # "" = nhánh mặc định của repo
+BRANCH     = "Gấm"                     # nhánh chứa code pipeline này (nhánh main của repo là code KHÁC). "" = nhánh mặc định
 INPUT_DIR  = "/kaggle/input/datasets/gmnguynhng/copypaste"
 WORK       = "/kaggle/working"
 
@@ -163,16 +163,44 @@ if not TEST_MODE:
             print("Dùng GITHUB_TOKEN từ Kaggle Secrets")
     except Exception:
         print("Không có secret GITHUB_TOKEN → clone như repo public")
-shutil.rmtree(CLONE, ignore_errors=True)
-rc, out = sh(f"git clone -q --depth 1 {'-b ' + BRANCH if BRANCH else ''} '{url}' '{CLONE}'", check=False, quiet=True)
+def clone(branch):
+    shutil.rmtree(CLONE, ignore_errors=True)
+    b = f"-b '{branch}'" if branch else ""
+    rc, out = sh(f"git clone -q --depth 1 {b} '{url}' '{CLONE}'", check=False, quiet=True)
+    return rc, out.replace(url, REPO_URL)            # không in token ra log
+
+def find_code():
+    # code có thể nằm ở gốc repo hoặc trong thư mục con (vd khi đẩy cả thư mục datamate-pipeline/)
+    return sorted(glob.glob(f"{CLONE}/**/datamate_pipeline.py", recursive=True), key=len)
+
+rc, out = clone(BRANCH)
+if rc and BRANCH:
+    print(f"Không clone được nhánh '{BRANCH}' → thử nhánh mặc định rồi tự tìm nhánh có code")
+    rc, out = clone("")
 if rc:
-    raise SystemExit("Clone lỗi. Kiểm tra: Internet = On; REPO_URL đúng; repo private thì cần secret GITHUB_TOKEN.\n"
-                     + out.replace(url, REPO_URL))
-sh(f"git -C '{CLONE}' remote set-url origin '{REPO_URL}'", check=False, quiet=True)   # xoá token khỏi .git/config
-# code có thể nằm ở gốc repo hoặc trong thư mục con (vd khi đẩy cả thư mục datamate-pipeline/)
-hits = sorted(glob.glob(f"{CLONE}/**/datamate_pipeline.py", recursive=True), key=len)
+    raise SystemExit("Clone lỗi. Kiểm tra: Internet = On; REPO_URL đúng; repo private thì cần secret GITHUB_TOKEN.\n" + out)
+hits = find_code()
 if not hits:
-    raise SystemExit("Repo không có datamate_pipeline.py")
+    # nhánh đang clone không có pipeline này -> dò mọi nhánh, chỉ tự chọn khi có ĐÚNG MỘT nhánh chứa code
+    sh(f"git -C '{CLONE}' fetch -q --depth 1 origin '+refs/heads/*:refs/remotes/origin/*'", check=False, quiet=True)
+    _, heads = sh(f"git -C '{CLONE}' for-each-ref --format='%(refname:short)' refs/remotes/origin/", check=False, quiet=True)
+    cands = []
+    for h in heads.split():
+        if h.endswith("/HEAD"):
+            continue
+        _, files = sh(f"git -C '{CLONE}' ls-tree -r --name-only '{h}'", check=False, quiet=True)
+        if any(f.endswith("datamate_pipeline.py") for f in files.split()):
+            cands.append(h.split("/", 1)[1])
+    print("Nhánh có datamate_pipeline.py:", cands or "không có")
+    if len(cands) != 1:
+        raise SystemExit("Nhánh đang chọn không có datamate_pipeline.py. Đặt BRANCH ở ô 0 = một trong: " + str(cands))
+    print(f"→ tự dùng nhánh '{cands[0]}'")
+    rc, out = clone(cands[0])
+    hits = find_code()
+    if rc or not hits:
+        raise SystemExit("Clone nhánh có code lỗi:\n" + out)
+sh(f"git -C '{CLONE}' remote set-url origin '{REPO_URL}'", check=False, quiet=True)   # xoá token khỏi .git/config
+sh(f"git -C '{CLONE}' branch --show-current", check=False)
 CODE = os.path.dirname(hits[0])
 os.chdir(CODE)
 sh(f"git -C '{CLONE}' log -1 --format='commit %h  %ad  %s' --date=iso", check=False)   # ghi commit đang chạy
