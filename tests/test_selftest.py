@@ -380,3 +380,101 @@ def test_strip_think_and_no_thinking_template():
     llm = d.LLM.__new__(d.LLM)
     llm.tok = Tok()
     assert llm._fmt([{"role": "user", "content": "x"}]) == "think-off"
+
+
+def test_notebook_probe_has_main_guard():
+    """vLLM V1 / TP=2 mở tiến trình con bằng 'spawn' -> script nạp model phải có khối `if __name__ == "__main__"`
+    (thiếu nó: tiến trình con chạy lại script, tạo LLM lồng nhau -> 'Engine core initialization failed', lỗi thật trên Kaggle 10/11)."""
+    import json
+    here = os.path.dirname(os.path.abspath(__file__))
+    nb = json.load(open(os.path.join(here, "..", "notebooks", "datamate_kaggle.ipynb"), encoding="utf-8"))
+    src = next("".join(c["source"]) for c in nb["cells"] if "PROBE = " in "".join(c["source"]))
+    probe = src.split('open(PROBE, "w").write(r"""')[1].split('""")')[0]
+    compile(probe, "probe_llm.py", "exec")
+    assert 'if __name__ == "__main__":' in probe
+    assert "d.LLM(" not in probe.split("def main")[0]          # không tạo model ở cấp module
+
+
+def test_generic_parse_fixes_nov10():
+    """Lỗi tổng quát thấy khi chạy public 10/11 (sửa theo LOẠI câu, kiểm lại trên train):
+    'hôm nào/bữa nào/ngày mô' = hỏi NGÀY; 'top năm món' = 5 món; 'ngày mô quán' không phải hỏi địa chỉ."""
+    import re
+    import compiler as C
+    for q in ["trong thang 4/25 hom nao quan ban dc nhieu tien nhat", "thang 4/2026 bua nao tiem ban duoc nhieu tien nhut",
+              "thang 11/25 ngay mo quan ban nhieu tien nhat"]:
+        assert re.search(C.DAY_WHICH, q), q
+    assert not re.search(C.DAY_WHICH, "doanh thu hom nay bao nhieu")
+    assert C._top_n("top nam mon ban chay nhat tuan nay", r"(mon)\b") == (5, True)
+    assert C._top_n("nam mon ban chay nhat", r"(mon)\b") == (5, False)
+    assert C._top_n("nhung mon ban chay nhat", r"(mon)\b") == (None, False)
+    assert C._top_n("mon nao ban chay nhat", r"(mon)\b") == (1, True)
+    t = C.key("Tháng 11/25 ngày mô quán bná nhiều tiền nhất?")
+    assert not any(re.search(qp, t) for qp, _ in C.NOT_RECORDED[1:2])
+
+
+def test_residual_token_guard():
+    import compiler as C
+    vocab = {"tien", "ban", "thang", "la", "bao", "nhieu", "doanh", "thu"}
+    sp = {"intent": "doanh_thu", "loc": {}}
+    assert C.residual_tokens(sp, C.key("Tiền bán Đậu phụ rán giòn tháng 10/2025 là bao nhiêu?"), vocab) == ["dau", "phu", "ran", "gion"]
+    sp2 = {"intent": "doanh_thu", "loc": {"ten": "Đậu phụ rán giòn"}}
+    assert C.residual_tokens(sp2, C.key("Tiền bán Đậu phụ rán giòn tháng 10/2025 là bao nhiêu?"), vocab) == []
+    assert C.residual_tokens(sp, C.key("doanh thu T5/2026 la bao nhieu"), vocab) == []
+    assert "nv001" in C.residual_tokens(sp, C.key("thang nay NV001 ban bao nhieu tien"), vocab)
+    # chỉ tính chữ có trong TÊN thực thể của shop: 'ly' (đơn vị) không phải bộ lọc bị bỏ sót
+    shop = {"dau", "hu", "chien", "gion", "nv001", "ca", "phe"}
+    # chữ trùng tên shop + cụm ≥ 2 chữ lạ liền nhau (doanh thu cả shop)
+    assert C.residual_tokens(sp, C.key("Tiền bán Đậu phụ rán giòn tháng 10/2025 là bao nhiêu?"), vocab, shop) == ["dau", "gion", "phu", "ran"]
+    sp_don = {"intent": "so_don"}
+    assert C.residual_tokens(sp_don, C.key("tu dau nam toi bay chu bao nhieu don"), vocab | {"don", "tu", "dau", "nam", "toi"}, shop) == []
+    assert C.residual_tokens(sp, C.key("thang 5 ban bao nhieu ly"), vocab, shop) == []
+
+
+def test_industry_hits_from_rulebook_delta():
+    import rule_delta as R
+    rd = R.RuleDelta("x")
+    rd.ok = True
+    rd.fp = {"ca phe :: size": {}, "nha thuoc :: ke don": {}, "doanh thu": {}}
+    rd.status = {"cua hang dien thoai :: tra gop": "new", "ca phe :: topping": "new", "doanh thu": "same", "nha thuoc :: x": "extended"}
+    assert rd.flagged_sections() == ["cua hang dien thoai"]        # cà phê đã có ở train -> không phải ngành mới
+    assert rd.industry_hits("Sổ bán hàng của cửa hàng điện thoại, chủ tiệm tự ghi") == ["cua hang dien thoai"]
+    assert rd.industry_hits("Cà phê sữa (M) Trà đào") == []
+    assert rd.industry_hits("Kênh bán: tại quầy, điện thoại") == []
+
+
+def test_llm_batch_error_isolated(tmp_path):
+    """Một prompt lỗi (OOM…) không được làm hỏng cả lô (Kaggle 10/11: 1000/1000 câu 'fatal')."""
+    from collections import Counter
+    import datamate_pipeline as d
+    llm = d.LLM.__new__(d.LLM)
+    llm.backend, llm.model_name, llm.tok, llm.max_new, llm.max_model_len = "x", "m", None, 10, 100000
+    llm.cache, llm.cache_path, llm.stats = {}, str(tmp_path / "c.jsonl"), Counter()
+
+    def gen(prompts):
+        if len(prompts) > 1 or "BOOM" in prompts[0]:
+            raise RuntimeError("CUDA out of memory")
+        return ["ok:" + prompts[0][-3:]]
+    llm._gen = gen
+    out = llm.generate([[{"role": "user", "content": "aaa"}], [{"role": "user", "content": "BOOM"}], [{"role": "user", "content": "ccc"}]])
+    assert out[0].endswith("aaa") and out[1] == "" and out[2].endswith("ccc")
+    assert llm.stats["loi_lo"] == 1 and llm.stats["loi_prompt"] == 1
+
+
+def test_rescue_candidate_order():
+    import datamate_pipeline as d
+    it = {"C": {"type": "number", "answer": 5}, "spec": {"tin_cay": "thap"}}
+    r = {"A": {"line": {"type": "number", "answer": 6}}, "B": {"line": None}}
+    assert d.rescue_candidate(it, r, "abstain_choice_unsure") == ({"type": "number", "answer": 5}, "may_tinh_thap")
+    assert d.rescue_candidate({"C": None, "spec": None}, r, "one_path") == ({"type": "number", "answer": 6}, "chi_a")
+    r2 = {"A": {"line": {"type": "number", "answer": 6}}, "B": {"line": {"type": "number", "answer": 7}}}
+    assert d.rescue_candidate({"C": None}, r2, "disagree")[1] == "a_khac_b"
+    assert d.rescue_candidate({"C": {"type": "number", "answer": 5, "_tie": True}}, r2, "compiler_tie_abstain") == (None, None)
+
+
+def test_wilson_lower_bound():
+    import importlib.util
+    here = os.path.dirname(os.path.abspath(__file__))
+    spec = importlib.util.spec_from_file_location("cal", os.path.join(here, "..", "scripts", "calibrate_decisions.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    assert m.wilson_lower(12, 15) > 0.5 and m.wilson_lower(8, 15) < 0.5 and m.wilson_lower(0, 0) == 0.0

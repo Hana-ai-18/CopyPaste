@@ -2394,9 +2394,14 @@ class LLM:
                         pass
         self.tok = None
         if backend == "vllm":
+            # GPU cũ (T4 = sm75): FlashInfer phải BIÊN DỊCH kernel lúc chạy và hỏng (đã gặp trên Kaggle: ninja/ld lỗi ở
+            # batch_prefill head_dim 256) -> tắt bộ lấy mẫu FlashInfer, ép backend attention Triton (chạy được trên mọi GPU)
+            os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
+            os.environ.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
             from vllm import LLM as VLLM, SamplingParams
             import torch
-            dtype = "float16" if torch.cuda.get_device_capability()[0] < 8 else "bfloat16"
+            cap = torch.cuda.get_device_capability()[0]
+            dtype = "float16" if cap < 8 else "bfloat16"
             base = dict(model=model, dtype=dtype, max_model_len=max_model_len, tensor_parallel_size=tp,
                         gpu_memory_utilization=gpu_mem, seed=SEED, trust_remote_code=True)
             # model đa phương thức (vd Qwen3.5) chỉ dùng chữ: không dành bộ nhớ cho bộ mã hoá ảnh.
@@ -2409,6 +2414,10 @@ class LLM:
             tries = [dict(enable_prefix_caching=True, **no_img),
                      dict(enable_prefix_caching=False, **no_img),
                      dict(enable_prefix_caching=False, enforce_eager=True, **no_img)]
+            if cap < 8:
+                # attention_config: vLLM ≥ 0.12 (V1). Bản cũ không hiểu -> TypeError -> các cấu hình KHÔNG ép backend ở cuối
+                att = [{"attention_config": {"backend": "TRITON_ATTN"}}] * 3 + [{"attention_config": {"backend": "FLEX_ATTENTION"}}]
+                tries = [dict(t, **a) for t, a in zip(tries + [dict(enable_prefix_caching=False, enforce_eager=True, **no_img)], att)] + tries
             if mm:
                 tries.append(dict(enable_prefix_caching=False, enforce_eager=True))      # bản vLLM không hiểu limit_mm_per_prompt
             err = None
@@ -2434,7 +2443,8 @@ class LLM:
             import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
             self.tok = AutoTokenizer.from_pretrained(model, trust_remote_code=True)
-            kw = dict(device_map="auto", trust_remote_code=True, torch_dtype=torch.float16)
+            # sdpa: attention không dựng cả ma trận seq×seq (Kaggle: 'eager' đòi 11–35 GiB cho prompt ~10k token -> OOM mọi câu)
+            kw = dict(device_map="auto", trust_remote_code=True, torch_dtype=torch.float16, attn_implementation="sdpa")
             if "awq" not in model.lower() and "gptq" not in model.lower():
                 try:
                     from transformers import BitsAndBytesConfig
@@ -2485,12 +2495,48 @@ class LLM:
             self.cache[keys[i]] = ""
         todo = [i for i in todo if i not in set(too_long)]
         if todo:
-            outs = self._gen([prompts[i] for i in todo])
+            outs = self._gen_safe([prompts[i] for i in todo])
             with open(self.cache_path, "a", encoding="utf-8") as fh:
                 for i, o in zip(todo, outs):
+                    if o is None:                       # lỗi sinh (OOM…): không ghi cache, câu này coi như không có code
+                        continue
                     self.cache[keys[i]] = o
                     fh.write(jdump({"k": keys[i], "v": o}) + "\n")
-        return [self.cache[k] for k in keys]
+            for i, o in zip(todo, outs):
+                if o is None:
+                    self.cache.setdefault(keys[i] + "#loi", "")
+        return [self.cache.get(k, "") for k in keys]
+
+    def _gen_safe(self, prompts):
+        """Sinh cả lô; lô lỗi -> sinh LẺ từng prompt; prompt lỗi -> None. Một prompt hỏng không được làm hỏng cả lô câu hỏi
+        (Kaggle backend hf: OOM ở 1 prompt dài làm 'fatal' toàn bộ 1000 câu, mất hết đường code)."""
+        st = self.__dict__.setdefault("stats", Counter())
+        try:
+            return self._gen(prompts)
+        except Exception as e:
+            st["loi_lo"] += 1
+            print(f"  [LLM] lô {len(prompts)} prompt lỗi ({type(e).__name__}: {str(e)[:160]}) -> sinh lẻ từng prompt", flush=True)
+            self._free_gpu()
+        outs = []
+        for p in prompts:
+            try:
+                outs.append(self._gen([p])[0])
+            except Exception as e:
+                st["loi_prompt"] += 1
+                print(f"  [LLM] prompt lỗi ({type(e).__name__}: {str(e)[:120]}) -> bỏ", flush=True)
+                self._free_gpu()
+                outs.append(None)
+        return outs
+
+    @staticmethod
+    def _free_gpu():
+        try:
+            import gc
+            import torch
+            gc.collect()
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
 
     def generate_short(self, list_of_messages, max_tokens=4):
         """Câu trả lời rất ngắn (trắc nghiệm 1 chữ cái), greedy, có cache riêng."""
@@ -2510,10 +2556,15 @@ class LLM:
                 import torch
                 outs = []
                 for i in todo:
-                    ids = self.tok(prompts[i], return_tensors="pt").to(self.hf.device)
-                    with torch.no_grad():
-                        g = self.hf.generate(**ids, max_new_tokens=max_tokens, do_sample=False)
-                    outs.append(self.strip_think(self.tok.decode(g[0][ids["input_ids"].shape[1]:], skip_special_tokens=True)))
+                    try:
+                        ids = self.tok(prompts[i], return_tensors="pt").to(self.hf.device)
+                        with torch.no_grad():
+                            g = self.hf.generate(**ids, max_new_tokens=max_tokens, do_sample=False)
+                        outs.append(self.strip_think(self.tok.decode(g[0][ids["input_ids"].shape[1]:], skip_special_tokens=True)))
+                    except Exception as e:
+                        print(f"  [LLM] câu hỏi ngắn lỗi ({type(e).__name__}) -> bỏ", flush=True)
+                        self._free_gpu()
+                        outs.append("")
             else:
                 outs = ["A"] * len(todo)        # dummy: luôn chọn phương án đầu (= lựa chọn của bộ sửa chữ)
             with open(self.cache_path, "a", encoding="utf-8") as fh:
@@ -3428,17 +3479,73 @@ def normalize_batch(llm, normalizer, qrows, args):
     return res, per_q
 
 
-def _rule_delta_guard(it):
-    """Rule-Delta Guard: luật nền của intent đã đổi/bỏ trong rulebook đang chạy, hoặc câu dùng thuật ngữ của luật MỚI
-    -> KHÔNG dùng máy tính (đã kiểm theo luật train) cho câu này; đặc tả hạ xuống tin cậy thấp."""
-    if RULE_DELTA is None or not it.get("spec"):
+COMPILER_VOCAB = None          # từ vựng câu hỏi train (lexicon/compiler_vocab.json) cho chặn chữ lạ
+
+
+def load_compiler_vocab(path=None):
+    global COMPILER_VOCAB
+    path = path or os.path.join(HERE, "lexicon", "compiler_vocab.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            COMPILER_VOCAB = set(json.load(fh)["tokens"])
+    except Exception:
+        COMPILER_VOCAB = None
+    return COMPILER_VOCAB
+
+
+def shop_profile_text(biz):
+    """README + tên hàng của shop (để nhận NGÀNH: cà phê, điện thoại, sửa xe, mẹ và bé…)."""
+    if getattr(biz, "_profile_txt", None) is None:
+        names = []
+        for tn in ("hang", "dong"):
+            df = biz.V.get(tn) if isinstance(getattr(biz, "V", None), dict) else None
+            if df is not None and "ten_hang" in df.columns:
+                names += [str(x) for x in df["ten_hang"].dropna().unique()[:3000]]
+        biz._profile_txt = key((getattr(biz, "readme", "") or "") + " " + " ".join(names))
+    return biz._profile_txt
+
+
+def _demote(it, why, field):
+    sp = it.get("spec")
+    if sp and sp.get("tin_cay", "cao") == "cao":
+        it["spec"] = dict(sp, tin_cay="thap", **{field: why})
+        it["log"][field] = why
+
+
+def _rule_delta_guard(it, biz=None):
+    """Chặn máy tính tự quyết khi nó có thể đang tính theo HIỂU BIẾT CŨ:
+    1) Rule-Delta: luật nền của intent đã đổi/bỏ, hoặc câu dùng thuật ngữ của luật MỚI -> bỏ hẳn kết quả máy tính.
+    2) Ngành mới: shop thuộc ngành mà rulebook đang chạy có luật mới/đổi (vd cửa hàng điện thoại: thu máy cũ, trả góp)
+       -> hạ tin cậy (chỉ dùng khi đường code đồng ý).
+    3) Chữ lạ: câu còn chữ ngoài từ vựng câu hỏi train và ngoài tên thực thể đã gắn (tên món/nhân viên/nhóm không tìm
+       thấy…) -> có thể bộ lọc bị bỏ sót -> hạ tin cậy.
+    4) 'Không trả lời được' do máy tính KHÔNG THẤY dữ liệu (không phải câu hỏi thông tin shop không ghi): định dạng shop
+       mới có thể chứa dữ liệu ở chỗ máy tính không biết -> hạ tin cậy."""
+    if not it.get("spec"):
         return
-    why = RULE_DELTA.block_reason(it["spec"], key(it["q_norm"] + " " + it["q"]))
-    if why:
-        it["log"]["rule_delta"] = why
-        it["log"]["compiler_blocked"] = it.get("C")
-        it["C"] = None
-        it["spec"] = dict(it["spec"], tin_cay="thap", _blocked=why)
+    sp = it["spec"]
+    if RULE_DELTA is not None:
+        why = RULE_DELTA.block_reason(sp, key(it["q_norm"] + " " + it["q"]))
+        if why:
+            it["log"]["rule_delta"] = why
+            it["log"]["compiler_blocked"] = it.get("C")
+            it["C"] = None
+            it["spec"] = dict(sp, tin_cay="thap", _blocked=why)
+            return
+        biz = biz or it.get("_biz")
+        if biz is not None:
+            ind = RULE_DELTA.industry_hits(shop_profile_text(biz))
+            if ind:
+                _demote(it, "ngành có luật mới/đổi: " + ", ".join(ind), "_nganh_moi")
+    biz = biz or it.get("_biz")
+    if COMPILER_VOCAB and sp.get("intent") != "unanswerable" and biz is not None:
+        rest = CMP.residual_tokens(sp, key(it["q_norm"] or it["q"]), COMPILER_VOCAB, CMP.shop_entity_tokens(biz))
+        if rest:
+            _demote(it, " ".join(rest[:6]), "_chu_la")
+    C = it.get("C")
+    if C is not None and C.get("type") == "unanswerable" and sp.get("intent") != "unanswerable" \
+            and "ngoai khoang" not in key(C.get("reason", "")):        # kỳ ngoài dữ liệu (§7) vẫn chắc chắn
+        _demote(it, C.get("reason", ""), "_khong_thay_du_lieu")
 
 
 def _compiler_paths(llm, biz, items, args):
@@ -3470,7 +3577,7 @@ def _compiler_paths(llm, biz, items, args):
             print(f"  [cảnh báo] không dựng được bộ truy hồi ví dụ: {e}", flush=True)
         msgs = []
         for i in need_llm:
-            ex = RT.few_shot_text(ret, items[i]["q_norm"] or items[i]["q"], k=4) if ret is not None else ""
+            ex = RT.few_shot_text(ret, items[i]["q_norm"] or items[i]["q"], k=4, exclude_biz=biz.id) if ret is not None else ""
             items[i]["log"]["spec_examples"] = len(ex.split("\n- Câu")) if ex else 0
             msgs.append(CMP.spec_messages(items[i]["q"], items[i]["q_norm"], str(pd.Timestamp(items[i]["as_of"]).date()), periods_text(items[i]["P"]), ex))
         try:
@@ -3554,7 +3661,7 @@ def provisional_answer(qrow, biz, cal, normalizer):
         return None
     sp["_nguon"] = "luat"
     it["spec"], it["C"] = sp, CMP.compile_spec(sp, biz, it["as_of"])
-    _rule_delta_guard(it)
+    _rule_delta_guard(it, biz)
     C = it.get("C")
     if C is None or C.get("_tie") or (it.get("spec") or {}).get("tin_cay") == "thap":
         return None
@@ -3589,6 +3696,18 @@ def solve_batch(llm, rulebook, biz, qrows, cal, normalizer, args):
         results = {v: per_var[v][i] for v in variants}
         decision, final, audit = decide_all(llm, it, results, len(variants), args)
         sp = it.get("spec")
+        if final.get("type") == "abstain":
+            # CỨU câu bỏ trống: luôn ghi ứng viên tốt nhất (để đo trên train); chỉ TRẢ LỜI bằng nó khi loại ứng viên này
+            # đã đo trên TRAIN đúng > 50% chắc chắn (cận dưới Wilson > 0,5) -> mỗi câu cứu được kỳ vọng +điểm (PA = đúng − sai)
+            cand, lab = rescue_candidate(it, results, decision)
+            if cand is not None:
+                audit = dict(audit or {}, ung_vien=cand, ung_vien_nhan=lab)
+                tab = getattr(args, "_calibration", None) or {}
+                kk = f"cuu:{lab}|{(sp or {}).get('intent', '-')}"
+                row = tab.get(kk) if (tab.get(kk) or {}).get("n", 0) >= getattr(args, "_cal_min_n", 15) else tab.get(f"cuu:{lab}")
+                if row and row.get("tra_loi"):
+                    audit["cuu"] = f"{kk if row is tab.get(kk) else 'cuu:' + lab}: p={row.get('p')} (n={row.get('n')}) trên train"
+                    decision, final = f"{decision}->cuu:{lab}", cand
         pmodel = getattr(args, "_abstain_model", None)
         if pmodel and final.get("type") != "abstain":
             # bỏ trống theo XÁC SUẤT ĐÚNG: PA = đúng − sai, nên chỉ trả lời khi p > ngưỡng (mặc định 0,5)
@@ -3616,6 +3735,29 @@ def solve_batch(llm, rulebook, biz, qrows, cal, normalizer, args):
                          compiler=it.get("C"), audit=audit or None)
         out.append((final, it["log"]))
     return out
+
+
+def rescue_candidate(it, results, decision):
+    """Ứng viên tốt nhất cho một câu đang bỏ trống + nhãn loại (để hiệu chỉnh trên train):
+    máy tính (tin cậy thấp / bị hạ) > A khác B (lấy A) > chỉ A > chỉ B. Không cứu câu hoà ở biên (BTC đã loại hoà)."""
+    if "tie" in decision:
+        return None, None
+    C, sp = it.get("C"), it.get("spec") or {}
+
+    def ok(x):
+        return isinstance(x, dict) and x.get("type") not in (None, "abstain")
+    if ok(C) and not C.get("_tie"):
+        lab = "may_tinh_" + ("khong_tl" if C.get("type") == "unanswerable" else "thap" if sp.get("tin_cay") == "thap" else "cao")
+        return clean_final(C), lab
+    a, b = (results.get("A") or {}).get("line"), (results.get("B") or {}).get("line")
+    suf = lambda x: "_khong_tl" if x.get("type") == "unanswerable" else ""   # noqa: E731
+    if ok(a) and ok(b):
+        return clean_final(a), "a_khac_b" + suf(a)
+    if ok(a):
+        return clean_final(a), "chi_a" + suf(a)
+    if ok(b):
+        return clean_final(b), "chi_b" + suf(b)
+    return None, None
 
 
 def solve_question(llm, rulebook, biz, qrow, cal, normalizer, args, log):
@@ -3667,6 +3809,11 @@ def run(args):
     if CMP is not None:
         CMP.WEEK_START = RULE_PARAMS.get("week_start", 0)
     print(f"Rulebook: {len(RULE_INDEX.rules)} luật nguyên tử; tham số {RULE_PARAMS}", flush=True)
+    if getattr(args, "vocab_guard", "on") == "on":
+        v = load_compiler_vocab()
+        print(f"Chặn chữ lạ cho máy tính: {'%d chữ' % len(v) if v else 'TẮT (thiếu lexicon/compiler_vocab.json)'}", flush=True)
+    if RULE_DELTA is not None:
+        print("Ngành có luật mới/đổi:", RULE_DELTA.flagged_sections() or "không", flush=True)
     for w_ in rp_warn:
         print("  [cảnh báo rulebook]", w_, flush=True)
     with open(os.path.join(out_dir, "rulebook_rules.json"), "w", encoding="utf-8") as fh:
@@ -3789,8 +3936,11 @@ def run(args):
         print(f"Bỏ trống theo xác suất đúng: ngưỡng {args._abstain_model.get('nguong')} (mô hình fit trên train, {args._abstain_model.get('n')} câu)", flush=True)
     args._calibration = None
     if getattr(args, "calibration", None) and os.path.exists(args.calibration):
-        args._calibration = json.load(open(args.calibration, encoding="utf-8")).get("bang")
-        print(f"Hiệu chỉnh bỏ trống: {sum(1 for v in args._calibration.values() if v.get('bo_trong'))} nhãn bỏ trống (đo trên train)", flush=True)
+        _cj = json.load(open(args.calibration, encoding="utf-8"))
+        args._calibration, args._cal_min_n = _cj.get("bang"), _cj.get("min_n", 15)
+        print(f"Hiệu chỉnh: {sum(1 for v in args._calibration.values() if v.get('bo_trong'))} nhãn đổi sang bỏ trống, "
+              f"{sum(1 for k, v in args._calibration.items() if k.startswith('cuu:') and v.get('tra_loi'))} loại ứng viên được CỨU "
+              f"(đo trên train)", flush=True)
     if args.llm == "none":
         # không có LLM chạy được (vd máy không GPU): chỉ nộp đáp án CHẮC CHẮN của đường máy tính, còn lại abstain
         write_submission()
@@ -4140,6 +4290,7 @@ def main():
     r.add_argument("--time_budget", type=int, default=0, help="giây; hết thì dừng")
     r.add_argument("--fresh", action="store_true", help="ghi đè submission cũ thay vì chạy tiếp")
     r.add_argument("--provisional", default="on", choices=["on", "off"], help="pha tạm: đáp án máy tính cho mọi câu TRƯỚC khi nạp model")
+    r.add_argument("--vocab_guard", default="on", choices=["on", "off"], help="máy tính không tự quyết câu còn chữ ngoài từ vựng train")
     r.add_argument("--provisional_budget", type=int, default=2400, help="giây tối đa cho pha tạm (0 = không giới hạn)")
     r.add_argument("--shed", default="off", choices=["on", "off"],
                    help="tắt dần bước phụ khi dự báo vượt ngân sách (theo TỐC ĐỘ MÁY -> có thể làm kết quả khác giữa hai máy; mặc định tắt)")

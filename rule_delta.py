@@ -191,6 +191,23 @@ class RuleDelta:
         q = " " + rule_key(question_key) + " "
         return sorted({k for term, k in self.new_terms if " " + term + " " in q})
 
+    def flagged_sections(self):
+        """NGÀNH MỚI: mục ### của rulebook có luật mới/đổi mà rulebook train KHÔNG có ngành đó (vd 'cua hang dien thoai',
+        'sua xe'). Ngành đã có ở train mà chỉ thêm một luật (vd cà phê thêm 'topping ghi chung ô với món') thì KHÔNG tính:
+        máy tính đã đối chiếu ngành đó trên train; luật thêm được bắt riêng khi câu dùng thuật ngữ của nó (new_terms_in)."""
+        train_secs = {k.split(" :: ")[0] for k in self.fp if " :: " in k}
+        return sorted({k.split(" :: ")[0] for k, st in self.status.items()
+                       if st in ("new", "changed") and " :: " in k} - train_secs)
+
+    def industry_hits(self, shop_key_text):
+        """Ngành có luật mới/đổi mà shop này THUỘC (tên ngành có trong README / tên hàng của shop).
+        Máy tính được kiểm bằng luật train -> với shop ngành này, cách tính có thể đã khác (vd tiền thu máy cũ, trả góp,
+        topping ghi chung ô với món) nên không được tự quyết."""
+        if not self.ok:
+            return []
+        t = " " + re.sub(r"[^a-z0-9]+", " ", _k(shop_key_text)) + " "
+        return [s for s in self.flagged_sections() if " " + s + " " in t]
+
     def block_reason(self, spec, question_key):
         """Lý do KHÔNG được dùng máy tính cho đặc tả này trên rulebook đang chạy (None = được dùng)."""
         if not spec or not self.ok:

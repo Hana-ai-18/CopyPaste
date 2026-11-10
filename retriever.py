@@ -81,14 +81,20 @@ def bank_retriever(bank_path, model_path=None):
     return _RET[k]
 
 
-def few_shot_text(ret, query, k=4, min_score=0.0):
-    """Các ví dụ (câu train + đặc tả JSON đã kiểm) gần nhất để đưa vào prompt LLM viết đặc tả."""
+def few_shot_text(ret, query, k=4, min_score=0.0, exclude_biz=None):
+    """Các ví dụ (câu train + đặc tả JSON đã kiểm) gần nhất để đưa vào prompt LLM viết đặc tả.
+    exclude_biz: bỏ ví dụ của CHÍNH shop đang hỏi — khi chạy trên train để hiệu chỉnh, ví dụ cùng shop (thậm chí cùng câu)
+    làm điểm train đẹp giả, ngưỡng hiệu chỉnh sẽ lạc quan so với shop chưa thấy."""
     if ret is None:
         return ""
     lines = []
-    for sc, i in ret.topk(query, k):
+    for sc, i in ret.topk(query, k + 12 if exclude_biz else k):
+        if len(lines) >= k:
+            break
         if sc < min_score:
             continue
         b = ret.meta[i]
+        if exclude_biz and b.get("biz") == exclude_biz:
+            continue
         lines.append(f"- Câu: {b['question']}\n  Hôm nay: {b['as_of']}\n  Đặc tả: {json.dumps(b['spec'], ensure_ascii=False)}")
     return "\n".join(lines)

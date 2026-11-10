@@ -326,7 +326,7 @@ def _attr_in(biz, t, col):
 NOT_RECORDED = [
     (r"\b(khach|nguoi) (nu|nam)\b|gioi tinh", r"gioi tinh|\bnam nu\b|\bphai\b|gender"),
     # địa chỉ: 'khách ở đường X', 'khách đường X', 'nhà ở' — KHÔNG bắt 'đường đen' trong tên món
-    (r"(khach|nguoi|nha)( hang)? (o |tai |nha o |song o )?duong\b|dia chi|(o|tai) (quan|phuong)\b|nha o\b", r"dia chi|address|quan huyen|phuong xa"),
+    (r"(khach|nguoi|nha)( hang)? (o |tai |nha o |song o )?duong\b|dia chi|\b(o|tai) (quan|phuong)\b|\bnha o\b", r"dia chi|address|quan huyen|phuong xa"),
     (r"tan tam|le phep|chu dao|lanh nghe|tay nghe|quy men|hay khen|than thien|uy tin|chat luong phuc vu", None),
     (r"ly do huy|vi giao tre|huy vi|tra vi (loi|mua nham)|tra hang vi", r"ly do|nguyen nhan|reason"),
     (r"(uong|dung) moi lan|lieu dung|cach dung", r"lieu|cach dung|huong dan"),
@@ -346,6 +346,28 @@ def not_recorded(biz, t):
 
 
 # --------------------------------------------------------------------------- đặc tả bằng luật chữ
+# 'ngày nào' và các cách nói khác của nó: hôm nào, bữa nào, ngày mô/hôm mô/bữa mô (miền Trung), bữa nao
+DAY_WHICH = r"\b(ngay|hom|bua)\w* (nao|mo)\b"
+# số đếm bằng chữ sau 'top' ('top năm món' = 5 món, KHÔNG phải 'năm' = year)
+NUM_WORDS = {"hai": 2, "ba": 3, "bon": 4, "tu": 4, "nam": 5, "sau": 6, "bay": 7, "tam": 8, "chin": 9, "muoi": 10}
+
+
+def _top_n(t, noun):
+    """Số k của 'top k …' / 'k món …'. Trả (k, chắc chắn?)."""
+    m = re.search(r"\btop ?(\d{1,2})\b", t) or re.search(r"(?<![/\d])(\d{1,2}) " + noun, t)
+    if m:
+        return int(m.group(1)), True
+    m = re.search(r"\btop (" + "|".join(NUM_WORDS) + r")\b", t)
+    if m:
+        return NUM_WORDS[m.group(1)], True
+    m = re.search(r"\b(" + "|".join(NUM_WORDS) + r") " + noun, t)
+    if m:
+        return NUM_WORDS[m.group(1)], False          # 'năm món…' có thể là 'trong năm, món…' -> không chắc
+    if re.search(r"\btop\b|nhung (mon|mat hang|san pham|sp|khach)\b|cac (mon|mat hang|san pham|sp|khach)\b", t):
+        return None, False                             # hỏi NHIỀU mục mà không rõ bao nhiêu
+    return 1, True
+
+
 def spec_rules(question, as_of, biz, q_norm=None):
     """Nhận dạng intent + tham số bằng luật chữ trên câu đã chuẩn hoá. Trả dict hoặc None (không nhận ra chắc chắn)."""
     # intent đọc trên câu ĐÃ SỬA CHỮ (câu gốc bẩn có thể chứa 'nớ' -> 'no' làm lạc sang công nợ);
@@ -390,16 +412,20 @@ def spec_rules(question, as_of, biz, q_norm=None):
     # ---- công nợ
     if re.search(r"\bno\b|cong no|mua chiu|ghi so", t):
         mN = re.search(r"(qua|hon|tren) (\d+) ngay", t)
+        # 'các khoản nợ có tuổi nợ QUÁ 7 ngày còn bao nhiêu' hỏi MỘT số (nợ quá N ngày), không phải bảng các nhóm tuổi nợ
+        buckets = re.search(r"0\W*7\b|8\W*15\b|(tung|moi|cac) nhom|nhom tuoi|chia (theo )?(nhom|tuoi)", t)
+        if X is not None and mN and not buckets:
+            return mk("no_qua_n_ngay", X=X, n=int(mN.group(2)))
         if X is not None and re.search(r"tuoi no|0.7|8.15", t):
             return mk("tuoi_no", X=X)
-        if X is not None and mN:
-            return mk("no_qua_n_ngay", X=X, n=int(mN.group(2)))
         if X is not None and re.search(r"(\d+) khach .*no (nhieu|nhiu)|khach no (nhieu|nhiu) nhat|top (\d+)|(\d+) khach .*(con )?no", t) \
                 and re.search(r"bang|liet ke|kem|top|nhung|nao|moi nguoi|tung nguoi", t):
             n = re.search(r"(\d+) khach|top (\d+)", t)
             return mk("top_khach_no", X=X, n=int(n.group(1) or n.group(2)) if n else 3)
         if X is not None and re.search(r"(bao nhi\w*|bn|may|so) khach", t):
             return mk("so_khach_no", X=X)
+        if X is not None and re.search(r"\bai\b|khach nao|(tung|tug|moi) (nguoi|ngui|nguoi)|nhung ai|top|liet ke", t):
+            return None              # hỏi AI nợ / từng người -> bảng, không phải tổng nợ
         if X is not None and re.search(r"(tong|bao nhi\w*|bn|con no|chua thu|con thieu|con lai)", t):
             return mk("tong_no", X=X)
         if P is not None and re.search(r"no them|mua chiu them|ghi no them", t) and re.search(r"tra( no)?|thanh toan", t):
@@ -455,7 +481,7 @@ def spec_rules(question, as_of, biz, q_norm=None):
     if re.search(r"\bhuy\b", t) and P is not None and not re.search(r"\bvi\b|ly do|tien|doanh thu|dthu|khach|mat hang", t):
         return mk("so_don_huy", tu=P[0], den=P[1], ti_le=pct)
     # ---- ngày / tháng cao nhất, tăng liên tục
-    if re.search(r"ngay nao", t) and re.search(r"cao nhat|nhieu (tien )?nhat|nhiu tien nhat|dat nhat|lon nhat", t) and P is not None:
+    if re.search(DAY_WHICH, t) and re.search(r"cao nhat|nhieu (tien )?nhat|nhiu tien nhat|dat nhat|lon nhat", t) and P is not None:
         return mk("ngay_doanh_thu_cao_nhat", tu=P[0], den=P[1])
     if re.search(r"thang nao", t) and re.search(r"cao nhat|nhieu (tien )?nhat|nhiu tien nhat|lon nhat", t) and len(ms) >= 2:
         return mk("thang_doanh_thu_cao_nhat", thang=ms)
@@ -463,14 +489,17 @@ def spec_rules(question, as_of, biz, q_norm=None):
         return mk("doanh_thu_tang_lien_tuc", thang=ms)
     # ---- bán chạy, số lượng bán, khách
     if re.search(r"ban chay|hot nhat|ban (duoc |dc )?nhieu nhat", t) and re.search(r"mat hang|mon|san pham|hang nao|\bsp\b|hang gi", t) and P is not None:
-        mN = re.search(r"(?<![/\d])(\d{1,2}) (mat hang|mon|san pham|sp)\b", t)
-        n = int(mN.group(1)) if mN else 1
+        n, sure = _top_n(t, r"(mat hang|mon|san pham|sp)\b")
+        if n is None or not sure:
+            return None
         return mk("ban_chay", tu=P[0], den=P[1], n=n)
     if re.search(r"(ai|khach nao) .*(nhieu tien nhat|chi nhieu nhat)|khach (mua|chi) nhieu tien nhat", t) and P is not None:
         if re.search(r"\bnhom\b|\bca\b|kenh|so don|nhieu (don|lan)", t):
             return None
-        mN = re.search(r"(?<![/\d])(\d{1,2}) khach", t)
-        return mk("khach_mua_nhieu_tien_nhat", tu=P[0], den=P[1], n=int(mN.group(1)) if mN else 1)
+        n, sure = _top_n(t, r"khach\b")
+        if n is None or not sure:
+            return None
+        return mk("khach_mua_nhieu_tien_nhat", tu=P[0], den=P[1], n=n)
     if re.search(r"binh quan moi (don|bill|hoa don)|trung binh moi (don|bill|hoa don)|gia tri (trung binh|binh quan) (mot|moi) don", t) and P is not None \
             and not re.search(r"\bnhom\b|khach|kenh|\bca\b|nhan vien|tai quay|dien thoai|online", t):
         return mk("doanh_thu_binh_quan_don", tu=P[0], den=P[1])
@@ -490,7 +519,7 @@ def spec_rules(question, as_of, biz, q_norm=None):
                                   r"chuyen khoan|\bcod\b|vi dien tu|zalo|online|nhan vien|khach|ngay le|cuoi tuan|tet|\bgio\b|tai quay|dien thoai|"
                                   r"qua (app|san|web|fb|facebook)|lien nhau|(may|bao nhieu|bn|nhieu|dem) (don|ngay|bill|lan)|so (don|ngay)|ngay nao|thang nao|"
                                   r"tro len|tro xuong|it nhat|toi thieu|≥|>=|lan luot|\bva doanh thu\b|tung (thang|ngay)|gia ban|ban ra voi|"
-                                  r"cao nhat|nhieu nhat|lon nhat|thap nhat|it nhat|\bai\b|nguoi ban|tra bang|\bnhom\w*|binh qu|trung bi|ngay\w* nao|"
+                                  r"cao nhat|nhieu nhat|lon nhat|thap nhat|it nhat|\bai\b|nguoi ban|tra bang|\bnhom\w*|binh qu|trung bi|ngay\w* nao|(hom|bua)\w* (nao|mo)|ngay mo|"
                                   r"thang\w* nao|\bmoi\w* (don|bill)", t):
             return None
         if re.search(r"(bao nhi\w*|bn\w*|may|nhieu|nhiu|nhieu|tong cong \w+) (kg|binh|chai|lon|hop|thung|cai|goi|vien|bao|cay|met|m2|m3|tui|ly|coc|phan|suat|cuon|bo|doi|chiec)\b", t):
@@ -521,9 +550,86 @@ def spec_rules(question, as_of, biz, q_norm=None):
             return None
         return mk("doanh_thu", tu=P[0], den=P[1], loc=loc, ti_trong=pct)
     if re.search(r"(bao nhieu|may|bn|so) (don|bill|hoa don|order)", t) and P is not None and not re.search(
-            r"huy|tra|khach|mat hang|tren|duoi|hon|it nhat|tro len|%|tien|\bca\b|kenh|nhan vien|tai quay|dien thoai|online|zalo|cod|chuyen khoan|tien mat|gio|ngay nao|moi ngay|trung binh|co (mon|hang|mat hang|san pham)", t):
+            r"huy|tra|khach|mat hang|tren|duoi|hon|it nhat|tro len|%|tien|\bca\b|kenh|nhan vien|tai quay|dien thoai|online|zalo|cod|chuyen khoan|tien mat|gio|ngay nao|moi ngay|trung binh|co (mon|hang|mat hang|san pham)|"
+            r"\bnhom\b|mua (hang|mon|sp|san pham)|\bco (mua|ban|goi)\b|(hom|bua)\w* (nao|mo)", t):
         return mk("so_don", tu=P[0], den=P[1])
     return None
+
+
+# --------------------------------------------------------------------------- chặn chữ lạ (vocab guard)
+# Máy tính chỉ được TỰ QUYẾT khi mọi chữ trong câu đều đã được hiểu: từ vựng câu hỏi train (≥ 2 shop) + tên thực thể đã
+# gắn vào đặc tả. Còn chữ lạ (tên món/nhân viên/nhóm không tìm thấy, điều kiện lọc mới…) -> có thể là bộ lọc bị bỏ sót
+# -> trả TỔNG cả shop là sai. Khi đó đặc tả hạ xuống tin cậy thấp (chỉ dùng khi đường code đồng ý).
+_TOK = re.compile(r"[a-z0-9]+")
+_SKIP_SPEC_KEYS = {"q", "intent", "_nguon", "tin_cay", "tu", "den", "X", "n", "N", "thang", "ti_le", "ti_trong", "dem", "theo_hang"}
+
+
+def spec_entity_tokens(spec):
+    out = set()
+
+    def walk(v):
+        if isinstance(v, dict):
+            for k, x in v.items():
+                if k not in _SKIP_SPEC_KEYS:
+                    walk(x)
+        elif isinstance(v, (list, tuple, set)):
+            for x in v:
+                walk(x)
+        elif isinstance(v, str):
+            out.update(_TOK.findall(key(v)))
+    walk({k: v for k, v in (spec or {}).items() if k not in _SKIP_SPEC_KEYS})
+    return out
+
+
+def question_tokens(t):
+    """Chữ của câu (đã key) trừ số, ngày, kỳ viết tắt (t5, th10, q2…)."""
+    out = []
+    for w in _TOK.findall(t):
+        if w.isdigit() or re.fullmatch(r"(t|th|thg|q|quy|thang|nam|ngay|tuan)\d+|\d+(h|g|k|tr|m|d|ngay|thang)?", w):
+            continue
+        out.append(w)
+    return out
+
+
+ENTITY_COLS = ("ten_hang", "ma_hang", "nhom", "hoat_chat", "khach_ten", "khach_ma", "nhan_vien", "ho_ten", "ncc", "ncc_ten",
+               "dong_xe", "nhan_vien_goi")
+
+
+def shop_entity_tokens(biz, max_unique=5000):
+    """Chữ xuất hiện trong TÊN thực thể của shop (món, mã hàng, nhóm, khách, nhân viên, NCC, dòng xe) — không lấy đơn vị,
+    kênh, hình thức thanh toán (không phải bộ lọc 'ẩn')."""
+    if getattr(biz, "_ent_tok", None) is not None:
+        return biz._ent_tok
+    out = set()
+    for df in (biz.V or {}).values():
+        for c in ENTITY_COLS:
+            if c in df.columns:
+                u = df[c].dropna().unique()
+                if len(u) <= max_unique:
+                    for v in u:
+                        out.update(_TOK.findall(key(str(v))))
+    biz._ent_tok = {w for w in out if not w.isdigit()}
+    return biz._ent_tok
+
+
+def residual_tokens(spec, t, vocab, shop_tokens=None):
+    """Chữ trong câu KHÔNG thuộc từ vựng câu hỏi train, KHÔNG thuộc thực thể đã gắn vào đặc tả, nhưng LẠI có trong tên
+    thực thể của shop (shop_tokens) = câu nhắc tới một món/nhân viên/nhóm… mà máy tính không gắn được (vd 'Đậu phụ rán
+    giòn' khi shop ghi 'Đậu hũ chiên giòn', 'NV001', 'nhóm bia') -> danh sách (rỗng = không thấy bộ lọc bị bỏ sót).
+    shop_tokens=None: mọi chữ ngoài từ vựng đều tính (chặt hơn)."""
+    if not vocab:
+        return []
+    ent = spec_entity_tokens(spec)
+    toks = [w for w in question_tokens(t) if len(w) > 1]
+    unk = [w not in vocab and w not in ent for w in toks]
+    out = [w for w, u in zip(toks, unk) if u and (shop_tokens is None or w in shop_tokens)]
+    # DOANH THU CẢ SHOP (không lọc): ≥ 2 chữ lạ LIỀN NHAU = cụm tên món chưa gắn được (vd 'phụ rán' trong 'Đậu phụ rán
+    # giòn' khi shop ghi 'Đậu hũ chiên giòn') dù không trùng tên nào của shop -> trả doanh thu cả shop là sai
+    if (spec or {}).get("intent") == "doanh_thu" and not (spec or {}).get("loc"):
+        for i in range(len(toks) - 1):
+            if unk[i] and unk[i + 1]:
+                out += [toks[i], toks[i + 1]]
+    return list(dict.fromkeys(out))
 
 
 # --------------------------------------------------------------------------- máy tính

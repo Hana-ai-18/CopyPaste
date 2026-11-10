@@ -55,7 +55,7 @@ MAX_LEN    = 28000                     # đủ cho rulebook + thẻ dữ liệu 
 N_PATHS    = 2                         # 2 đường độc lập, chỉ trả lời khi đồng thuận
 SESSION_HOURS = 11.5                   # Kaggle cắt phiên ở 12 giờ: để dư 30 phút
 RUN_SMOKE  = True                      # đo nhanh trên vài câu TRAIN (có điểm) trước khi chạy public
-RUN_TRAIN_EVAL = False                 # True: chạy 6 shop TRAIN + fit mô hình bỏ trống (thêm ~1–2 giờ GPU) rồi mới chạy public
+RUN_TRAIN_EVAL = True                  # chạy 6 shop TRAIN có LLM (~1–1,5 giờ GPU) -> đo loại ứng viên nào ĐÁNG trả lời -> giảm bỏ trống ở public
 
 # chế độ thử cục bộ (không dùng trên Kaggle)
 TEST_MODE = os.environ.get("DM_NB_TEST") == "1"
@@ -219,35 +219,46 @@ assert not miss, f"Repo thiếu file: {miss} — đẩy đủ code lên GitHub"
 ''')
 
 md("## 4. Cài vLLM và chọn model + backend chạy được THẬT trên GPU này\n"
-   "Mỗi lần thử: cài bản vLLM hợp với model → nạp model bằng CHÍNH lớp `LLM` của pipeline trong tiến trình riêng → "
-   "hỏi `17 + 25` và đòi đúng `42` (bắt cả lỗi fp16 ra chữ rác, model vẫn 'nghĩ' dù đã tắt).\n"
-   "Thứ tự: `MODEL` → `FALLBACK_MODEL` → backend `hf` → không LLM. Lần thử thành công cũng đã tải sẵn model.")
+   "Mỗi bản vLLM (0.19.1 → 0.17.1 → 0.10.1.1 nếu Python ≤ 3.12): thử `MODEL` rồi `FALLBACK_MODEL`, nạp bằng CHÍNH lớp `LLM` "
+   "của pipeline (trên T4 tự ép attention Triton) trong tiến trình riêng, hỏi `17 + 25` và đòi đúng `42`.\n"
+   "Không bản nào chạy → backend `hf` → không LLM. Lần thử thành công cũng đã tải sẵn model.")
 code(r'''
-def install_plan(model):
-    """[(lệnh pip, env, các TP thử)] theo họ model. Qwen3.5 (lai Gated DeltaNet) cần vLLM ≥ 0.17 (chỉ engine V1);
-    bản ≥ 0.20 dùng CUDA 13 (driver Kaggle có thể không chạy) nên ghim 0.19.1 / 0.17.1 (CUDA 12.8).
-    Qwen2.5: vLLM 0.10.1.1 / 0.8.5 engine V0 (đường chạy quen của T4)."""
+# Bản vLLM thử lần lượt. Mỗi bản: thử MỌI model trước khi cài bản khác (cài lại vLLM mất ~4 phút).
+# - Kaggle 11/2026: Python 3.13 -> vLLM < 0.10.2 KHÔNG cài được (Requires-Python < 3.13).
+# - vLLM ≥ 0.20 dùng CUDA 13 (driver Kaggle có thể không chạy) -> ghim 0.19.1 / 0.17.1 (CUDA 12.8).
+# - T4 (sm75): pipeline tự ép attention Triton (FlashInfer biên dịch kernel lúc chạy và hỏng trên T4).
+VLLM_VERSIONS = [("0.19.1", "", {}), ("0.17.1", "'transformers>=4.57,<5'", {}),
+                 ("0.10.1.1", "'transformers>=4.55,<4.57'", {"VLLM_USE_V1": "0"})]      # bản cuối chỉ cho Python ≤ 3.12
+
+def tps_for(model):
     m = model.lower()
     if "qwen3.5" in m or "qwen3_5" in m:
-        tps = [2] if N_GPU >= 2 else [1]           # fp16 ~19 GB: 1 T4 (15 GB) không đủ
-        return [("'vllm==0.19.1'", {}, tps),
-                ("'vllm==0.17.1' 'transformers>=4.57,<5'", {}, tps)]
-    tps = [2, 1] if N_GPU >= 2 else [1]
-    return [("'vllm==0.10.1.1' 'transformers>=4.55,<4.57'", {"VLLM_USE_V1": "0"}, tps),
-            ("'vllm==0.8.5.post1' 'transformers>=4.51,<4.53'", {"VLLM_USE_V1": "0"}, tps)]
+        return [2] if N_GPU >= 2 else []           # fp16 ~19 GB: 1 T4 (15 GB) không đủ
+    return [2, 1] if N_GPU >= 2 else [1]
+
+def vllm_installed():
+    rc, out = sh("python -c 'import vllm; print(vllm.__version__)'", check=False, quiet=True)
+    return out.strip().splitlines()[-1] if rc == 0 and out.strip() else None
 
 PROBE = f"{WORK}/probe_llm.py"
 open(PROBE, "w").write(r"""
+# BẮT BUỘC có `if __name__ == "__main__"`: vLLM (engine V1, TP=2) mở tiến trình con bằng 'spawn' -> tiến trình con
+# chạy lại file này từ đầu; không có khối bảo vệ thì nó lại tạo LLM mới -> "bootstrapping phase" -> engine khởi tạo lỗi.
 import sys, time, tempfile
-code, backend, model, tp, maxlen = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
-sys.path.insert(0, code)
-import datamate_pipeline as d                  # dùng ĐÚNG lớp LLM mà pipeline dùng (cùng tham số, cùng chat template)
-t = time.time()
-llm = d.LLM(backend, model, tempfile.mkdtemp(), max_model_len=maxlen, tp=tp)
-out = llm.generate([[{"role": "user", "content": "Chỉ trả lời bằng đúng một số, không giải thích: 17 + 25 = ?"}]])[0]
-print("OUT", repr(out[:200]), "| vllm_extra =", getattr(llm, "vllm_extra", None))
-assert "42" in out, "trả lời sai / rỗng (fp16 hỏng? model vẫn đang nghĩ?)"
-print("PROBE_OK", f"{time.time() - t:.0f}s")
+
+def main():
+    code, backend, model, tp, maxlen = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
+    sys.path.insert(0, code)
+    import datamate_pipeline as d              # dùng ĐÚNG lớp LLM mà pipeline dùng (cùng tham số, cùng chat template)
+    t = time.time()
+    llm = d.LLM(backend, model, tempfile.mkdtemp(), max_model_len=maxlen, tp=tp)
+    out = llm.generate([[{"role": "user", "content": "Chỉ trả lời bằng đúng một số, không giải thích: 17 + 25 = ?"}]])[0]
+    print("OUT", repr(out[:200]), "| vllm_extra =", getattr(llm, "vllm_extra", None))
+    assert "42" in out, "trả lời sai / rỗng (fp16 hỏng? model vẫn đang nghĩ?)"
+    print("PROBE_OK", f"{time.time() - t:.0f}s")
+
+if __name__ == "__main__":
+    main()
 """)
 
 def fix_core_libs():
@@ -263,17 +274,27 @@ def fix_core_libs():
 
 os.makedirs(f"{WORK}/probe_logs", exist_ok=True)
 
-def root_cause(path, n=14):
-    """Những dòng lỗi GỐC trong log (bỏ các dòng chuyển tiếp chung chung 'Engine core initialization failed')."""
-    pat = re.compile(r"(Error|Exception|error:|Traceback|assert|OutOfResources|out of memory|not supported|Unsupported|CUDA)", re.I)
-    skip = re.compile(r"(Engine core initialization failed|See root cause|Traceback \(most recent|File \"|^\s*\^|raise |~~~)")
-    seen, out = set(), []
-    for l in open(path, encoding="utf-8", errors="replace"):
-        l = re.sub(r"^\(\w+ pid=\d+\)\s*", "", l.strip())
-        l = re.sub(r"^(ERROR|WARNING|INFO) \d\d-\d\d [\d:]+ \[[^\]]*\]\s*", "", l)
-        if l and pat.search(l) and not skip.search(l) and l not in seen:
-            seen.add(l); out.append(l[:300])
-    return out[:n]
+def root_cause(path, n=40):
+    """Đoạn log TRƯỚC lần thử hỏng đầu tiên = nơi tiến trình con của vLLM in lỗi thật ('See root cause above').
+    Bỏ khung traceback, dòng INFO vô hại và các dòng chuyển tiếp chung chung; giữ lại cảnh báo/lỗi/dòng cuối."""
+    lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+    cut = next((k for k, l in enumerate(lines) if "[vLLM] cấu hình" in l or "Engine core initialization failed" in l), len(lines))
+    noise = re.compile(r"(^\s*File \"|^\s*\^|~~~|^\s*\.\.\.<|^\s*[\)\(]\s*$|Engine core initialization failed|See root cause|"
+                       r"Traceback \(most recent|Loading safetensors|it/s\]|s/it\]|%\|)")
+    keep = []
+    for l in lines[:cut]:
+        l2 = re.sub(r"^\(\w+ pid=\d+\)\s*", "", l.rstrip())
+        lvl = re.match(r"^(ERROR|WARNING|INFO|DEBUG) \d\d-\d\d [\d:.]+ \[[^\]]*\]\s?", l2)
+        body = l2[lvl.end():] if lvl else l2
+        if not body.strip() or noise.search(body):
+            continue
+        if lvl and lvl.group(1) in ("INFO", "DEBUG") and not re.search(r"(backend|attention|memory|GiB|platform|capab|kernel)", body, re.I):
+            continue
+        keep.append(((lvl.group(1) + ": ") if lvl and lvl.group(1) != "INFO" else "") + body.strip()[:300])
+    sig = re.compile(r"(bootstrapping phase|freeze_support|out of memory|OutOfResources|no kernel image|not supported on|"
+                     r"compute capability|CUDA error|NCCL error|Killed|signal \d+)", re.I)
+    known = [l.strip()[:300] for l in lines if sig.search(l)][:6]      # dấu hiệu lỗi đã biết, ở BẤT KỲ đâu trong log
+    return known + keep[-n:] or ["(không thấy dòng lỗi trước lần thử đầu — xem cả file log)"]
 
 BASE_ENV = {"VLLM_WORKER_MULTIPROC_METHOD": "spawn", "TOKENIZERS_PARALLELISM": "false"}
 RUN_ENV = dict(BASE_ENV)
@@ -282,22 +303,32 @@ TRIED = []
 if TEST_MODE or N_GPU == 0:
     BACKEND = "dummy" if TEST_MODE else "none"
 else:
-    for model in dict.fromkeys([MODEL, FALLBACK_MODEL]):        # bỏ trùng, giữ thứ tự
-        for spec, extra_env, tps in install_plan(model):
-            rc, _ = sh(f"pip install -q {spec} python-calamine openpyxl pyyaml scikit-learn", check=False, quiet=True,
-                       timeout=1800)
+    py = sys.version_info[:2]
+    for ver, extra_pkgs, extra_env in VLLM_VERSIONS:
+        if ver.startswith("0.10") and py >= (3, 13):
+            print(f"bỏ qua vLLM {ver}: không hỗ trợ Python {py[0]}.{py[1]}"); continue
+        if vllm_installed() != ver:
+            # gỡ sạch bản cũ: flashinfer của bản trước còn sót -> 'flashinfer-cubin version does not match' (đã gặp)
+            sh("pip uninstall -y -q vllm flashinfer-python flashinfer-cubin flashinfer-jit-cache", check=False, quiet=True)
+            rc, _ = sh(f"pip install -q 'vllm=={ver}' {extra_pkgs} python-calamine openpyxl pyyaml scikit-learn",
+                       check=False, quiet=True, timeout=1800)
             if rc:
-                print(f"Cài {spec} lỗi → thử phương án sau"); TRIED.append((model, spec, "cài lỗi")); continue
+                print(f"Cài vLLM {ver} lỗi → thử bản sau"); TRIED.append(("*", ver, "cài lỗi")); continue
             fix_core_libs()
-            for tp in tps:
-                lg = f"{WORK}/probe_logs/{len(TRIED):02d}_{model.split('/')[-1]}_tp{tp}.log"
+        for model in dict.fromkeys([MODEL, FALLBACK_MODEL]):    # bỏ trùng, giữ thứ tự ưu tiên
+            if ("qwen3.5" in model.lower() or "qwen3_5" in model.lower()) and ver.startswith("0.10"):
+                continue                                         # Qwen3.5 cần vLLM ≥ 0.17
+            for tp in tps_for(model):
+                lg = f"{WORK}/probe_logs/{len(TRIED):02d}_{model.split('/')[-1]}_v{ver}_tp{tp}.log"
                 rc, out = sh(f"python {PROBE} '{CODE}' vllm {model} {tp} {MAX_LEN}", check=False, quiet=True,
                              timeout=2700, env={**BASE_ENV, **extra_env}, log=lg)
                 ok = rc == 0 and "PROBE_OK" in out
-                print(f"  {model} | {spec} | TP={tp}: {'CHẠY ĐƯỢC' if ok else 'lỗi'}  (log đầy đủ: {lg})")
-                if not ok:
+                print(f"  {model} | vLLM {ver} | TP={tp}: {'CHẠY ĐƯỢC' if ok else 'lỗi'}  (log: {lg})")
+                if ok:
+                    print("   ", [l for l in out.splitlines() if l.startswith("OUT")][-1:])
+                else:
                     print("  LỖI GỐC:\n    " + "\n    ".join(root_cause(lg)))
-                TRIED.append((model, spec, tp, "ok" if ok else "lỗi"))
+                TRIED.append((model, ver, tp, "ok" if ok else "lỗi"))
                 if ok:
                     BACKEND, TP, RUN_MODEL = "vllm", tp, model
                     RUN_ENV.update(extra_env)
@@ -306,7 +337,6 @@ else:
                 break
         if BACKEND:
             break
-        print(f"!!! {model} không chạy được trên máy này → thử model sau")
     if BACKEND is None:
         print("!!! vLLM không chạy được → backend hf (chậm hơn nhiều; hết giờ thì câu còn lại = đáp án máy tính)")
         sh("pip install -q -U 'transformers>=4.45' accelerate bitsandbytes python-calamine openpyxl pyyaml scikit-learn",
@@ -344,7 +374,9 @@ md("## 6. Lệnh chạy chung")
 code(r'''
 llm_flag = BACKEND                      # vllm | hf | dummy (chỉ thử cục bộ) | none (không LLM: chỉ đáp án chắc của máy tính)
 BATCH = 48 if BACKEND == "vllm" else 4
-COMMON = (f"--llm {llm_flag} --model {RUN_MODEL} --tp {TP} --max_model_len {MAX_LEN} --n_paths {N_PATHS} "
+# backend hf (sinh lẻ từng prompt, ~30–60 giây/lượt trên T4) không kịp 2 đường cho 1000 câu -> 1 đường
+npaths = N_PATHS if BACKEND == "vllm" else 1
+COMMON = (f"--llm {llm_flag} --model {RUN_MODEL} --tp {TP} --max_model_len {MAX_LEN} --n_paths {npaths} "
           f"--batch {BATCH} --cache '{CACHE}' --spec_bank '{SPEC_BANK}' --lm_texts '{TRAIN}/questions.jsonl' "
           f"--exec_timeout 40 --shed off --provisional on")
 print(COMMON)
@@ -368,20 +400,23 @@ if RUN_SMOKE and BACKEND != "none":
 ''')
 
 code(r'''
-# (tuỳ chọn) 6 shop TRAIN + fit mô hình bỏ trống theo PA — chỉ dùng TRAIN
+# 6 shop TRAIN có LLM -> hiệu chỉnh quyết định theo PA — CHỈ dùng TRAIN (luật 6)
+#  * câu ĐANG bỏ trống: loại ứng viên (máy tính tin cậy thấp / A khác B / chỉ một đường) nào đúng chắc > 50% trên train
+#    -> ở public trả lời bằng ứng viên đó (giảm bỏ trống, mỗi câu kỳ vọng + điểm)
+#  * câu đang trả lời: nhãn nào đúng ≤ 50% trên train -> bỏ trống (trả lời là lỗ điểm)
 ABSTAIN = ""
-if RUN_TRAIN_EVAL and BACKEND not in ("none", "dummy"):
+if RUN_TRAIN_EVAL and BACKEND in ("vllm", "hf"):
     BLIND = "biz_103,biz_108,biz_113,biz_118,biz_124,biz_129"
     budget = max(1800, int((SESSION_HOURS * 0.45 - elapsed_h()) * 3600))
     sh(f"python datamate_pipeline.py run --split_dir '{TRAIN}' --out '{WORK}/out_train' {COMMON} --biz {BLIND} "
        f"--time_budget {budget}", check=False)
     sh(f"python datamate_pipeline.py score --split_dir '{TRAIN}' --pred '{WORK}/out_train/submission.jsonl' --only_pred",
        check=False)
-    rc, _ = sh(f"python scripts/fit_abstain.py --train '{TRAIN}' --run '{WORK}/out_train' --out '{WORK}/abstain_model.json'",
-               check=False)
-    if rc == 0 and os.path.exists(f"{WORK}/abstain_model.json"):
-        ABSTAIN = f" --abstain_model '{WORK}/abstain_model.json'"
-print("bỏ trống theo mô hình:", ABSTAIN or "không (dùng luật đồng thuận mặc định)")
+    rc, _ = sh(f"python scripts/calibrate_decisions.py --train '{TRAIN}' --run '{WORK}/out_train' --min_n 12 "
+               f"--out '{WORK}/decision_calibration.json'", check=False)
+    if rc == 0 and os.path.exists(f"{WORK}/decision_calibration.json"):
+        ABSTAIN += f" --calibration '{WORK}/decision_calibration.json'"
+print("hiệu chỉnh từ train:", ABSTAIN or "không (luật đồng thuận mặc định: chỉ trả lời khi 2 đường cùng đáp án)")
 ''')
 
 md("## 8. Chạy PUBLIC TEST → file nộp\n"

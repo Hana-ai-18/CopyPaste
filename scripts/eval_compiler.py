@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 import datamate_pipeline as d  # noqa: E402
 import compiler as C  # noqa: E402
+import build_compiler_vocab as BV  # noqa: E402
 
 
 def main():
@@ -29,6 +30,7 @@ def main():
     ap.add_argument("--show_bad", type=int, default=30)
     ap.add_argument("--out", default=None)
     ap.add_argument("--rulebook", default=None, help="mô phỏng chạy với rulebook KHÁC (vd public) để xem Rule-Delta chặn intent nào; mặc định rulebook train")
+    ap.add_argument("--vocab", default="off", help="chặn chữ lạ: off | loso (từ vựng dựng từ các shop KHÁC — mô phỏng shop chưa thấy) | <file json>")
     a = ap.parse_args()
     qs = [json.loads(x) for x in open(os.path.join(a.train, "questions.jsonl"), encoding="utf-8")]
     gold = {json.loads(x)["id"]: json.loads(x) for x in open(os.path.join(a.train, "answers.jsonl"), encoding="utf-8")}
@@ -41,34 +43,35 @@ def main():
         rd = R.RuleDelta(open(a.rulebook, encoding="utf-8").read() if a.rulebook else rb)
     except Exception as e:
         print("(không dựng được Rule-Delta:", e, ")")
-    by_biz = collections.defaultdict(list)
-    for q in qs:
-        by_biz[q["business_id"]].append(q)
+    rows = BV.collect_specs(a.train, a.cache, norm=a.norm)
+    ts = BV.token_shops(rows) if a.vocab == "loso" else None
+    vfile = set(json.load(open(a.vocab, encoding="utf-8"))["tokens"]) if a.vocab not in ("off", "loso") else None
     res = collections.Counter()
     per = collections.defaultdict(collections.Counter)
+    guard = collections.Counter()
     bad = []
     fout = open(a.out, "w", encoding="utf-8") if a.out else None
-    for bid, items in sorted(by_biz.items()):
-        B = d.Business(os.path.join(a.train, "data", bid), cache_dir=a.cache)
-        norm = None
-        if a.norm and d.Normalizer:
-            norm = d.Normalizer(B.terms, ["bill", "voucher", "top", "order", "ship", "cod", "size", "zalo", "ok", "sale"], [rb, B.readme])
-            if d.ContextNormalizer is not None:
-                norm = d.ContextNormalizer(norm, [rb, B.readme])
-        for q in items:
-            qn = None
-            if norm is not None:
-                try:
-                    qn = norm.normalize(q["question"])["text"]
-                except Exception:
-                    qn = None
+    cur, B = None, None
+    for bid, q, qn, sp in rows:
+        if bid != cur:
+            cur, B = bid, d.Business(os.path.join(a.train, "data", bid), cache_dir=a.cache)
+            vocab = BV.vocab_from(ts, 2, exclude_shop=bid) if ts is not None else vfile
+        if True:
             try:
-                sp = C.spec_rules(q["question"], q["as_of_date"], B, qn)
                 ans = C.compile_spec(sp, B, q["as_of_date"]) if sp else None
             except Exception as e:
                 sp, ans = {"intent": "LỖI"}, None
                 res["lỗi"] += 1
                 bad.append(("LỖI", bid, q["question"][:80], str(e)[:80], ""))
+            if ans is not None and vocab and sp and sp.get("tin_cay", "cao") == "cao" and sp.get("intent") != "unanswerable":
+                rest = C.residual_tokens(sp, C.key(qn or q["question"]), vocab, C.shop_entity_tokens(B))
+                if rest:
+                    s_ = d.score_one(ans, gold[q["id"]])
+                    guard[{1: "đúng", -1: "sai", 0: "?"}[s_]] += 1
+                    if guard["_show"] < 25:
+                        guard["_show"] += 1
+                        print(f"  [chữ lạ] {rest[:4]} | {q['question'][:70]} | {'ĐÚNG' if s_ == 1 else 'SAI' if s_ == -1 else '?'}")
+                    sp = dict(sp, tin_cay="thap")
             it = (sp or {}).get("intent", "-") + ("(thấp)" if (sp or {}).get("tin_cay") == "thap" else "")
             if ans is not None and rd is not None and sp and rd.block_reason(sp, C.key((qn or "") + " " + q["question"])):
                 res["rule_delta chặn"] += 1
@@ -107,6 +110,8 @@ def main():
         print(f"  {it:<28} {dict(c)}")
     for x in bad[:a.show_bad]:
         print("  ✗", x)
+    if a.vocab != "off":
+        print(f"\nChặn chữ lạ ({a.vocab}): hạ tin cậy {guard['đúng'] + guard['sai'] + guard['?']} câu | trong đó máy tính vốn ĐÚNG {guard['đúng']}, SAI {guard['sai']}")
 
 
 if __name__ == "__main__":
