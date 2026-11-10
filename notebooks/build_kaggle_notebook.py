@@ -70,16 +70,20 @@ os.makedirs(DATA, exist_ok=True); os.makedirs(CACHE, exist_ok=True)
 def elapsed_h():
     return (time.time() - T0) / 3600
 
-def sh(cmd, check=True, timeout=None, env=None, quiet=False):
-    """Chạy lệnh shell, in log theo thời gian thực, trả (mã thoát, 60 dòng cuối). check=True: lỗi thì dừng notebook."""
+def sh(cmd, check=True, timeout=None, env=None, quiet=False, log=None):
+    """Chạy lệnh shell, in log theo thời gian thực, trả (mã thoát, 60 dòng cuối). check=True: lỗi thì dừng notebook.
+    log=<đường dẫn>: ghi TOÀN BỘ output vào file (lỗi gốc của vLLM thường nằm xa phía trên 60 dòng cuối)."""
     print(f"$ {cmd if len(cmd) < 400 else cmd[:400] + ' …'}", flush=True)
     p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                          env={**os.environ, **(env or {})}, bufsize=1)
     tail = collections.deque(maxlen=60)
+    lf = open(log, "w", encoding="utf-8") if log else None
     t = time.time()
     try:
         for line in p.stdout:
             tail.append(line.rstrip("\n"))
+            if lf:
+                lf.write(line)
             if not quiet:
                 print(line, end="", flush=True)
             if timeout and time.time() - t > timeout:
@@ -87,6 +91,9 @@ def sh(cmd, check=True, timeout=None, env=None, quiet=False):
         p.wait()
     except KeyboardInterrupt:
         p.kill(); raise
+    finally:
+        if lf:
+            lf.close()
     if quiet and p.returncode:
         print("\n".join(tail))
     if check and p.returncode:
@@ -254,6 +261,20 @@ def fix_core_libs():
     print("thư viện lõi:", out.strip().splitlines()[-1] if out.strip() else "?", "| OK" if rc == 0 else "| VẪN LỖI")
     return rc == 0
 
+os.makedirs(f"{WORK}/probe_logs", exist_ok=True)
+
+def root_cause(path, n=14):
+    """Những dòng lỗi GỐC trong log (bỏ các dòng chuyển tiếp chung chung 'Engine core initialization failed')."""
+    pat = re.compile(r"(Error|Exception|error:|Traceback|assert|OutOfResources|out of memory|not supported|Unsupported|CUDA)", re.I)
+    skip = re.compile(r"(Engine core initialization failed|See root cause|Traceback \(most recent|File \"|^\s*\^|raise |~~~)")
+    seen, out = set(), []
+    for l in open(path, encoding="utf-8", errors="replace"):
+        l = re.sub(r"^\(\w+ pid=\d+\)\s*", "", l.strip())
+        l = re.sub(r"^(ERROR|WARNING|INFO) \d\d-\d\d [\d:]+ \[[^\]]*\]\s*", "", l)
+        if l and pat.search(l) and not skip.search(l) and l not in seen:
+            seen.add(l); out.append(l[:300])
+    return out[:n]
+
 BASE_ENV = {"VLLM_WORKER_MULTIPROC_METHOD": "spawn", "TOKENIZERS_PARALLELISM": "false"}
 RUN_ENV = dict(BASE_ENV)
 BACKEND, TP, RUN_MODEL = None, 1, MODEL
@@ -269,10 +290,13 @@ else:
                 print(f"Cài {spec} lỗi → thử phương án sau"); TRIED.append((model, spec, "cài lỗi")); continue
             fix_core_libs()
             for tp in tps:
+                lg = f"{WORK}/probe_logs/{len(TRIED):02d}_{model.split('/')[-1]}_tp{tp}.log"
                 rc, out = sh(f"python {PROBE} '{CODE}' vllm {model} {tp} {MAX_LEN}", check=False, quiet=True,
-                             timeout=2700, env={**BASE_ENV, **extra_env})
+                             timeout=2700, env={**BASE_ENV, **extra_env}, log=lg)
                 ok = rc == 0 and "PROBE_OK" in out
-                print(f"  {model} | {spec} | TP={tp}: {'CHẠY ĐƯỢC' if ok else 'lỗi'}")
+                print(f"  {model} | {spec} | TP={tp}: {'CHẠY ĐƯỢC' if ok else 'lỗi'}  (log đầy đủ: {lg})")
+                if not ok:
+                    print("  LỖI GỐC:\n    " + "\n    ".join(root_cause(lg)))
                 TRIED.append((model, spec, tp, "ok" if ok else "lỗi"))
                 if ok:
                     BACKEND, TP, RUN_MODEL = "vllm", tp, model
@@ -287,7 +311,10 @@ else:
         print("!!! vLLM không chạy được → backend hf (chậm hơn nhiều; hết giờ thì câu còn lại = đáp án máy tính)")
         sh("pip install -q -U 'transformers>=4.45' accelerate bitsandbytes python-calamine openpyxl pyyaml scikit-learn",
            check=False, quiet=True, timeout=1800)
-        rc, out = sh(f"python {PROBE} '{CODE}' hf {MODEL_HF} 1 {MAX_LEN}", check=False, quiet=True, timeout=2700)
+        lg = f"{WORK}/probe_logs/hf.log"
+        rc, out = sh(f"python {PROBE} '{CODE}' hf {MODEL_HF} 1 {MAX_LEN}", check=False, quiet=True, timeout=2700, log=lg)
+        if not (rc == 0 and "PROBE_OK" in out):
+            print("  LỖI GỐC (hf):\n    " + "\n    ".join(root_cause(lg)))
         if rc == 0 and "PROBE_OK" in out:
             BACKEND, RUN_MODEL = "hf", MODEL_HF
         else:
@@ -406,7 +433,7 @@ shutil.copy(FINAL, f"{WORK}/submission_public.jsonl")
 
 code(r'''
 # nén log để tải về (bỏ cache)
-dirs = " ".join(d for d in ("out_public", "out_smoke", "out_train") if os.path.isdir(f"{WORK}/{d}"))
+dirs = " ".join(d for d in ("out_public", "out_smoke", "out_train", "probe_logs") if os.path.isdir(f"{WORK}/{d}"))
 sh(f"cd '{WORK}' && rm -f outputs.zip && zip -qr outputs.zip submission.jsonl {dirs} -x '*/cache/*'", check=False)
 print(f"Xong sau {elapsed_h():.2f} giờ. Tải về: {WORK}/submission.jsonl (+ outputs.zip)")
 ''')

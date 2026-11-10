@@ -2402,21 +2402,30 @@ class LLM:
             # model đa phương thức (vd Qwen3.5) chỉ dùng chữ: không dành bộ nhớ cho bộ mã hoá ảnh.
             # Thử từ cấu hình đầy đủ -> bớt dần tham số mà bản vLLM đang cài không hiểu / không hỗ trợ cho kiến trúc này.
             mm = any(k in model.lower() for k in ("qwen3.5", "qwen3_5", "qwen3.6", "-vl"))   # model ảnh+chữ
-            no_img = {"limit_mm_per_prompt": {"image": 0, "video": 0}}
+            no_img = {"limit_mm_per_prompt": {"image": 0, "video": 0}} if mm else {}
+            # Thử từ cấu hình đầy đủ -> bớt dần. Engine V1 chạy lõi trong TIẾN TRÌNH CON: mọi lỗi khởi tạo (vd model lai
+            # Gated DeltaNet + prefix caching -> "Mamba cache align mode" assert, CUDA graph không chụp được trên T4) chỉ
+            # hiện ra ở đây là RuntimeError "Engine core initialization failed" -> cũng phải thử cấu hình sau.
+            tries = [dict(enable_prefix_caching=True, **no_img),
+                     dict(enable_prefix_caching=False, **no_img),
+                     dict(enable_prefix_caching=False, enforce_eager=True, **no_img)]
             if mm:
-                tries = [dict(enable_prefix_caching=True, **no_img), dict(enable_prefix_caching=False, **no_img),
-                         dict(enable_prefix_caching=True), dict()]
-            else:                                   # model chỉ chữ: cấu hình y như trước
-                tries = [dict(enable_prefix_caching=True), dict()]
+                tries.append(dict(enable_prefix_caching=False, enforce_eager=True))      # bản vLLM không hiểu limit_mm_per_prompt
             err = None
             for extra in tries:
                 try:
                     self.engine = VLLM(**base, **extra)
                     self.vllm_extra = extra
                     break
-                except (TypeError, ValueError, NotImplementedError) as e:   # tham số không hợp -> thử bộ sau (lỗi CUDA/OOM thì ném ra luôn)
+                except (TypeError, ValueError, NotImplementedError, RuntimeError, AssertionError) as e:
                     err = e
-                    print(f"  [vLLM] cấu hình {extra} không dùng được ({type(e).__name__}: {str(e)[:160]}) -> thử bớt", flush=True)
+                    print(f"  [vLLM] cấu hình {extra} lỗi ({type(e).__name__}: {str(e)[:200]}) -> thử cấu hình sau", flush=True)
+                    try:                                # dọn bộ nhớ GPU của lần thử hỏng trước khi thử lần sau
+                        import gc
+                        gc.collect()
+                        torch.cuda.empty_cache()
+                    except Exception:
+                        pass
             else:
                 raise err
             self.sp = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_new_tokens, seed=SEED)
