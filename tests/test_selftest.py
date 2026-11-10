@@ -478,3 +478,15 @@ def test_wilson_lower_bound():
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     assert m.wilson_lower(12, 15) > 0.5 and m.wilson_lower(8, 15) < 0.5 and m.wilson_lower(0, 0) == 0.0
+
+
+def test_rethink_vote_rules():
+    import datamate_pipeline as d
+    n42 = {"type": "number", "answer": 42}
+    n7 = {"type": "number", "answer": 7}
+    g = d._vote([("A", n42), ("B", n7), ("D1", n42), ("D2", None)])
+    assert g[0][0] == 2 and set(g[0][1]) == {"A", "D1"}
+    g = d._vote([("A", n42), ("B", n7)])
+    assert g[0][0] == 1 and g[1][0] == 1                     # hoà phiếu -> không trả lời
+    g = d._vote([("D1", {"type": "abstain"}), ("D2", None)])
+    assert g == []

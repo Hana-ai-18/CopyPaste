@@ -2461,12 +2461,12 @@ class LLM:
         else:
             raise ValueError(backend)
 
-    def _fmt(self, messages):
+    def _fmt(self, messages, think=False):
         if self.tok is not None:
-            # enable_thinking=False: Qwen3/3.5 mặc định "nghĩ" trước khi trả lời -> tiêu hết max_tokens vào phần nghĩ, không còn code.
-            # Template không có biến này (Qwen2.5…) thì Jinja bỏ qua tham số thừa -> prompt y hệt cũ.
+            # enable_thinking=False (mặc định): Qwen3/3.5 tự "nghĩ" trước khi trả lời -> tiêu hết max_tokens vào phần nghĩ.
+            # think=True chỉ dùng ở vòng XEM LẠI (max_tokens lớn). Template không có biến này (Qwen2.5…) thì Jinja bỏ qua.
             try:
-                return self.tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+                return self.tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=bool(think))
             except TypeError:
                 return self.tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         return "\n\n".join(f"<{m['role']}>\n{m['content']}" for m in messages)
@@ -2479,16 +2479,19 @@ class LLM:
             return len(prompt) // 3
         return len(self.tok(prompt, add_special_tokens=False)["input_ids"])
 
-    def generate(self, list_of_messages):
-        prompts = [self._fmt(m) for m in list_of_messages]
-        keys = [self._k(p) for p in prompts]
+    def generate(self, list_of_messages, think=False, max_new=None):
+        """think=True: cho model (Qwen3/3.5) SUY NGHĨ trước khi trả lời (dùng ở vòng xem lại câu bỏ trống);
+        max_new: số token sinh tối đa cho lượt này (phần nghĩ dài hơn code nhiều)."""
+        self._cur_max = int(max_new or self.max_new)
+        prompts = [self._fmt(m, think=think) for m in list_of_messages]
+        keys = [self._k(p) + (f"#max{self._cur_max}" if self._cur_max != self.max_new else "") for p in prompts]
         todo = [i for i, k in enumerate(keys) if k not in self.cache]
         st = self.__dict__.setdefault("stats", Counter())
         st["goi_dai"] += len(prompts)
         st["goi_dai_that"] += len(todo)
         st["ky_tu_prompt"] += sum(len(prompts[i]) for i in todo)
         # prompt quá dài sẽ làm vLLM báo lỗi CẢ LÔ -> loại riêng từng prompt quá dài (trả rỗng = không có code = abstain)
-        limit = self.max_model_len - self.max_new - 32
+        limit = self.max_model_len - self._cur_max - 32
         too_long = [i for i in todo if self.n_tokens(prompts[i]) > limit]
         for i in too_long:
             print(f"  [cảnh báo] prompt {self.n_tokens(prompts[i])} token > giới hạn {limit} -> bỏ qua câu này", flush=True)
@@ -2586,8 +2589,14 @@ class LLM:
         return [self.strip_think(o) for o in self._gen_raw(prompts)]
 
     def _gen_raw(self, prompts):
+        mx = getattr(self, "_cur_max", None) or self.max_new
         if self.backend == "vllm":
-            res = self.engine.generate(prompts, self.sp, use_tqdm=False)
+            sp = self.sp
+            if mx != self.max_new:
+                from vllm import SamplingParams
+                # lượt dài (xem lại, có suy nghĩ): giải mã tham lam dễ lặp vòng trong phần nghĩ -> phạt lặp nhẹ (vẫn tất định)
+                sp = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=mx, seed=SEED, repetition_penalty=1.05)
+            res = self.engine.generate(prompts, sp, use_tqdm=False)
             return [r.outputs[0].text for r in res]
         if self.backend == "hf":
             import torch
@@ -2595,7 +2604,8 @@ class LLM:
             for p in prompts:
                 ids = self.tok(p, return_tensors="pt").to(self.hf.device)
                 with torch.no_grad():
-                    g = self.hf.generate(**ids, max_new_tokens=self.max_new, do_sample=False)
+                    g = self.hf.generate(**ids, max_new_tokens=mx, do_sample=False,
+                                         **({"repetition_penalty": 1.05} if mx != self.max_new else {}))
                 outs.append(self.tok.decode(g[0][ids["input_ids"].shape[1]:], skip_special_tokens=True))
             return outs
         # dummy: luôn abstain (dùng để test luồng chạy)
@@ -2661,7 +2671,23 @@ Các kỳ có sẵn trong P:
 RULE_INDEX = None   # RuleIndex của rulebook đang chạy (đặt trong run())
 
 
-def build_messages(rulebook, biz, q, q_norm, as_of, P, warnings, variant="A", readme_chars=3500):
+RETHINK_TMPL = """
+=== XEM LẠI KỸ: câu này các lần giải trước CHƯA đủ chắc để trả lời ===
+{prev}
+Lần này đừng làm nhanh. Trước khi viết code, suy nghĩ chậm từng bước và GHI phần phân tích thành chú thích # ở đầu solve():
+1. Câu hỏi hỏi CHÍNH XÁC đại lượng gì, của ai / mặt hàng nào / nhân viên nào / kênh nào, kỳ nào (dùng đúng KỲ ĐÃ TÍNH SẴN),
+   đáp án thuộc loại nào (số, %, ngày, tên, danh sách, bảng, đúng/sai, không trả lời được).
+2. Luật nào trong rulebook áp dụng (đơn huỷ, trả hàng, khách lẻ, quy đổi đơn vị, làm tròn, hoà, luật riêng của ngành) — ghi tên luật.
+3. Dữ liệu ở bảng/cột nào. Tên mặt hàng / khách / nhân viên trong câu có thể viết KHÁC dữ liệu (viết tắt, từ địa phương:
+   phụ = hũ, rán = chiên…): in thử các giá trị gần giống rồi chọn đúng, KHÔNG được bỏ qua bộ lọc mà tính cả shop.
+4. Tự kiểm kết quả: độ lớn, dấu, đơn vị, kỳ có dữ liệu không. Chỉ trả unanswerable khi rulebook nói vậy hoặc dữ liệu thật sự không có.
+{judge}"""
+
+RETHINK_JUDGE = ("Các kết quả trên LỆCH nhau hoặc chưa được xác nhận. Đừng tin kết quả nào chỉ vì nó có sẵn: tự tính lại từ đầu "
+                 "theo rulebook; nếu cách nào ở trên hiểu sai câu hỏi hay luật thì chỉ rõ trong chú thích.")
+
+
+def build_messages(rulebook, biz, q, q_norm, as_of, P, warnings, variant="A", readme_chars=3500, prev=None):
     sys_msg = SYSTEM_TMPL.format(rulebook=rulebook)
     w = ("LƯU Ý (bài học hay sai):\n" + "\n".join(f"- {x}" for x in warnings)) if warnings else ""
     if RULE_INDEX is not None:
@@ -2670,11 +2696,15 @@ def build_messages(rulebook, biz, q, q_norm, as_of, P, warnings, variant="A", re
             w = ("LUẬT LIÊN QUAN NHẤT (trích rulebook; vẫn phải theo TOÀN BỘ rulebook):\n" + blk + ("\n" + w if w else ""))
     common = dict(biz=biz.id, readme=(biz.readme or "(không có)")[:readme_chars], card=biz.card, as_of=str(pd.Timestamp(as_of).date()),
                   q_raw=q, periods=periods_text(P), warnings=w)
-    if variant == "A":
+    if variant in ("A", "D1", "D2"):
         q_norm_line = f"Câu hỏi đã chuẩn hoá chữ: {q_norm}" if q_norm and q_norm.strip().lower() != q.strip().lower() else ""
         user = USER_TMPL.format(q_norm_line=q_norm_line, **common)
     else:
         user = USER_TMPL_B.format(**common)
+    if variant == "D1":        # xem lại CÓ đối chiếu các kết quả trước
+        user += RETHINK_TMPL.format(prev=prev or "(các lần trước không ra kết quả)", judge=RETHINK_JUDGE)
+    elif variant == "D2":      # xem lại ĐỘC LẬP (không cho thấy kết quả trước -> phiếu bầu không bị dắt)
+        user += RETHINK_TMPL.format(prev="", judge="")
     return [{"role": "system", "content": sys_msg}, {"role": "user", "content": user}]
 
 
@@ -3168,13 +3198,19 @@ def _prep(qrow, biz, cal, normalizer, nr=None, nr_log=None):
 
 def _run_variant_batch(llm, rulebook, biz, items, cal, variant, args):
     """Chạy 1 đường (A hoặc B) cho cả lô câu: sinh code theo lô, chạy sandbox, sửa lỗi theo lô."""
-    msgs = [build_messages(rulebook, biz, it["q"], it["q_norm"], it["as_of"], it["P"], it["W"], variant=variant) for it in items]
+    msgs = [build_messages(rulebook, biz, it["q"], it["q_norm"], it["as_of"], it["P"], it["W"], variant=variant,
+                           prev=it.get("_prev_text")) for it in items]
     res = [{"line": None, "error": None, "code": None} for _ in items]
     pending = list(range(len(items)))
+    deep = variant.startswith("D")
     for attempt in range(args.max_repair + 1 + getattr(args, "sanity_rounds", 1)):
         if not pending:
             break
-        outs = llm.generate([msgs[i] for i in pending])
+        if deep:   # vòng xem lại: cho model nghĩ (Qwen3/3.5), nhiều token hơn
+            outs = llm.generate([msgs[i] for i in pending], think=getattr(args, "rethink_think", "on") == "on",
+                                max_new=getattr(args, "rethink_tokens", 6144))
+        else:
+            outs = llm.generate([msgs[i] for i in pending])
         nxt = []
         for i, out in zip(pending, outs):
             code = extract_code(out)
@@ -3691,10 +3727,14 @@ def solve_batch(llm, rulebook, biz, qrows, cal, normalizer, args):
             per_var[v] = full
         else:
             per_var[v] = _run_variant_batch(llm, rulebook, biz, items, cal, v, args)
-    out = []
+    first = []
     for i, it in enumerate(items):
         results = {v: per_var[v][i] for v in variants}
-        decision, final, audit = decide_all(llm, it, results, len(variants), args)
+        first.append(list(decide_all(llm, it, results, len(variants), args)) + [results])
+    rethink_batch(llm, rulebook, biz, items, first, cal, args)
+    out = []
+    for i, it in enumerate(items):
+        decision, final, audit, results = first[i]
         sp = it.get("spec")
         if final.get("type") == "abstain":
             # CỨU câu bỏ trống: luôn ghi ứng viên tốt nhất (để đo trên train); chỉ TRẢ LỜI bằng nó khi loại ứng viên này
@@ -3737,6 +3777,93 @@ def solve_batch(llm, rulebook, biz, qrows, cal, normalizer, args):
     return out
 
 
+def rethink_allowed(args):
+    """Còn thời gian cho vòng xem lại? Ước tổng thời gian nếu giữ tốc độ hiện tại; quá 90% ngân sách -> thôi xem lại
+    (ưu tiên mọi câu đều được giải lượt đầu)."""
+    if getattr(args, "rethink", "on") != "on" or args.llm in ("none", "dummy") and not getattr(args, "_rethink_test", False):
+        return False
+    tb = getattr(args, "time_budget", 0)
+    if not tb:
+        return True
+    done, total, t0 = getattr(args, "_progress", (0, 0, PROC_T0))
+    el = now() - PROC_T0
+    if el > tb * getattr(args, "rethink_until", 0.85):
+        return False
+    if done and total:
+        projected = (now() - t0) / (done / total) + (t0 - PROC_T0)
+        return projected <= 0.9 * tb
+    return True
+
+
+def _vote(cands):
+    """cands: [(tên, line)] -> [(số phiếu, [tên], line)] nhóm theo đáp án chuẩn hoá, nhiều phiếu trước."""
+    groups = {}
+    for name, line in cands:
+        if isinstance(line, dict) and line.get("type") not in (None, "abstain"):
+            k = canon(line)
+            g = groups.setdefault(k, [0, [], line])
+            g[0] += 1
+            g[1].append(name)
+    return sorted(groups.values(), key=lambda g: (-g[0], -sum(n.startswith("D") for n in g[1])))
+
+
+def rethink_batch(llm, rulebook, biz, items, first, cal, args):
+    """VÒNG XEM LẠI cho câu đang BỎ TRỐNG (không lướt qua một lần là thôi):
+    - D1: giải lại có cho xem các kết quả trước (máy tính / A / B) và yêu cầu phân tích từng bước, tự phán xử cách nào đúng;
+    - D2: giải lại ĐỘC LẬP (không thấy kết quả trước) cũng với phân tích từng bước;
+      cả hai cho model SUY NGHĨ (Qwen3/3.5 thinking) với nhiều token hơn, vẫn qua sandbox + kiểm luật + vòng sửa lỗi như A/B.
+    - Bỏ phiếu mọi kết quả (máy tính, A, B, D1, D2): trả lời khi một đáp án có ≥ 2 phiếu trong đó có ≥ 1 phiếu xem lại
+      và không có đáp án khác ngang phiếu; 'không trả lời được' phải được CẢ D1 và D2 nói.
+    Không xem lại câu hoà ở biên (BTC đã loại câu hoà)."""
+    idx = [i for i, (dec, fin, au, res) in enumerate(first) if fin.get("type") == "abstain" and "tie" not in dec]
+    if not idx or not rethink_allowed(args):
+        if idx:
+            for i in idx:
+                items[i]["log"]["nghi_lai"] = "bỏ qua (hết thời gian dự kiến)"
+        return
+    sub = [items[i] for i in idx]
+    for i, it in zip(idx, sub):
+        res = first[i][3]
+        prev = []
+        C = it.get("C")
+        if isinstance(C, dict) and C.get("type") not in (None, "abstain"):
+            prev.append(f"- Máy tính theo công thức{' (tin cậy thấp)' if (it.get('spec') or {}).get('tin_cay') == 'thap' else ''}: "
+                        f"{jdump(clean_final(C))[:300]}")
+        for v in ("A", "B"):
+            ln = (res.get(v) or {}).get("line")
+            err = (res.get(v) or {}).get("error")
+            if ln is not None:
+                prev.append(f"- Cách {v}: {jdump(ln)[:300]}")
+            elif err:
+                prev.append(f"- Cách {v}: lỗi ({str(err)[:120]})")
+        it["_prev_text"] = "Các lần trước:\n" + "\n".join(prev) if prev else ""
+    d1 = _run_variant_batch(llm, rulebook, biz, sub, cal, "D1", args)
+    d2 = _run_variant_batch(llm, rulebook, biz, sub, cal, "D2", args)
+    for j, i in enumerate(idx):
+        dec, fin, au, res = first[i]
+        res = dict(res, D1=d1[j], D2=d2[j])
+        it = items[i]
+        C = it.get("C")
+        cands = ([("C", clean_final(C))] if isinstance(C, dict) and not C.get("_tie") else []) + \
+            [(v, (res.get(v) or {}).get("line")) for v in ("A", "B", "D1", "D2")]
+        groups = _vote(cands)
+        info = {"phieu": [(g[0], g[1]) for g in groups][:4], "quyet_dinh_truoc": dec}
+        ok = False
+        if groups:
+            n, names, line = groups[0]
+            tie = len(groups) > 1 and groups[1][0] == n
+            deep = any(x.startswith("D") for x in names)
+            ok = n >= 2 and deep and not tie
+            if ok and line.get("type") == "unanswerable":
+                ok = "D1" in names and "D2" in names
+        it["log"]["nghi_lai"] = info
+        if ok:
+            lab = f"nghi_lai_{n}phieu" + ("_dd" if "D1" in names and "D2" in names else "")
+            first[i] = [lab, line, dict(au or {}, nghi_lai=info), res]
+        else:
+            first[i] = [dec + "+nghi_lai_khong_dong_thuan", fin, dict(au or {}, nghi_lai=info), res]
+
+
 def rescue_candidate(it, results, decision):
     """Ứng viên tốt nhất cho một câu đang bỏ trống + nhãn loại (để hiệu chỉnh trên train):
     máy tính (tin cậy thấp / bị hạ) > A khác B (lấy A) > chỉ A > chỉ B. Không cứu câu hoà ở biên (BTC đã loại hoà)."""
@@ -3751,6 +3878,9 @@ def rescue_candidate(it, results, decision):
         return clean_final(C), lab
     a, b = (results.get("A") or {}).get("line"), (results.get("B") or {}).get("line")
     suf = lambda x: "_khong_tl" if x.get("type") == "unanswerable" else ""   # noqa: E731
+    d1 = (results.get("D1") or {}).get("line")
+    if ok(d1):                                   # lần xem lại có phán xử (đã nghĩ kỹ) đứng trước các lượt nhanh
+        return clean_final(d1), "xem_lai_d1" + suf(d1)
     if ok(a) and ok(b):
         return clean_final(a), "a_khac_b" + suf(a)
     if ok(a):
@@ -3982,6 +4112,7 @@ def run(args):
                     out_of_time = True
                     break
                 chunk = items[k:k + args.batch]
+                args._progress = (n_done_run, n_total_run, t_start)      # cho vòng xem lại ước thời gian còn đủ không
                 try:
                     results = solve_batch(llm, rulebook, biz, chunk, cal, normalizer, args)
                 except Exception:
@@ -4290,6 +4421,10 @@ def main():
     r.add_argument("--time_budget", type=int, default=0, help="giây; hết thì dừng")
     r.add_argument("--fresh", action="store_true", help="ghi đè submission cũ thay vì chạy tiếp")
     r.add_argument("--provisional", default="on", choices=["on", "off"], help="pha tạm: đáp án máy tính cho mọi câu TRƯỚC khi nạp model")
+    r.add_argument("--rethink", default="on", choices=["on", "off"], help="câu bỏ trống: giải lại kỹ 2 lần (có/không xem kết quả trước) rồi bỏ phiếu")
+    r.add_argument("--rethink_tokens", type=int, default=6144, help="token sinh tối đa ở vòng xem lại (gồm phần suy nghĩ)")
+    r.add_argument("--rethink_think", default="on", choices=["on", "off"], help="bật chế độ suy nghĩ của model (Qwen3/3.5) ở vòng xem lại")
+    r.add_argument("--rethink_until", type=float, default=0.85, help="ngừng xem lại khi đã dùng quá tỉ lệ này của ngân sách thời gian")
     r.add_argument("--vocab_guard", default="on", choices=["on", "off"], help="máy tính không tự quyết câu còn chữ ngoài từ vựng train")
     r.add_argument("--provisional_budget", type=int, default=2400, help="giây tối đa cho pha tạm (0 = không giới hạn)")
     r.add_argument("--shed", default="off", choices=["on", "off"],

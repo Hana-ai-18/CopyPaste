@@ -53,6 +53,8 @@ FALLBACK_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct-AWQ"   # MODEL không chạy đ
 MODEL_HF   = "Qwen/Qwen2.5-Coder-7B-Instruct"       # chỉ dùng nếu mọi bản vLLM đều lỗi: backend hf (4-bit bitsandbytes, CHẬM)
 MAX_LEN    = 28000                     # đủ cho rulebook + thẻ dữ liệu + câu hỏi; prompt dài hơn tự bỏ qua câu đó
 N_PATHS    = 2                         # 2 đường độc lập, chỉ trả lời khi đồng thuận
+RETHINK    = True                      # câu bỏ trống: giải lại KỸ 2 lần (có suy nghĩ, có/không xem kết quả trước) rồi bỏ phiếu
+RETHINK_TOKENS = 6144                  # token tối đa mỗi lượt xem lại (gồm phần suy nghĩ của Qwen3.5)
 SESSION_HOURS = 11.5                   # Kaggle cắt phiên ở 12 giờ: để dư 30 phút
 RUN_SMOKE  = True                      # đo nhanh trên vài câu TRAIN (có điểm) trước khi chạy public
 RUN_TRAIN_EVAL = True                  # chạy 6 shop TRAIN có LLM (~1–1,5 giờ GPU) -> đo loại ứng viên nào ĐÁNG trả lời -> giảm bỏ trống ở public
@@ -378,7 +380,8 @@ BATCH = 48 if BACKEND == "vllm" else 4
 npaths = N_PATHS if BACKEND == "vllm" else 1
 COMMON = (f"--llm {llm_flag} --model {RUN_MODEL} --tp {TP} --max_model_len {MAX_LEN} --n_paths {npaths} "
           f"--batch {BATCH} --cache '{CACHE}' --spec_bank '{SPEC_BANK}' --lm_texts '{TRAIN}/questions.jsonl' "
-          f"--exec_timeout 40 --shed off --provisional on")
+          f"--exec_timeout 40 --shed off --provisional on "
+          f"--rethink {'on' if RETHINK else 'off'} --rethink_tokens {RETHINK_TOKENS}")
 print(COMMON)
 ''')
 
